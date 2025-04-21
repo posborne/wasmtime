@@ -142,18 +142,20 @@ impl Config {
             simd,
             exceptions,
             legacy_exceptions: _,
+            stack_switching,
 
             hogs_memory: _,
             nan_canonicalization: _,
             gc_types: _,
-            stack_switching: _,
             spec_test: _,
         } = test.config;
 
         // Enable/disable some proposals that aren't configurable in wasm-smith
         // but are configurable in Wasmtime.
-        self.module_config.function_references_enabled =
-            function_references.or(gc).unwrap_or(false);
+        self.module_config.function_references_enabled = function_references
+            .or(gc)
+            .or(stack_switching)
+            .unwrap_or(false);
         self.module_config.component_model_async = component_model_async.unwrap_or(false);
         self.module_config.component_model_async_builtins =
             component_model_async_builtins.unwrap_or(false);
@@ -162,6 +164,7 @@ impl Config {
         self.module_config.component_model_error_context =
             component_model_error_context.unwrap_or(false);
         self.module_config.component_model_gc = component_model_gc.unwrap_or(false);
+        self.module_config.stack_switching = stack_switching.unwrap_or(false);
 
         // Enable/disable proposals that wasm-smith has knobs for which will be
         // read when creating `wasmtime::Config`.
@@ -178,10 +181,11 @@ impl Config {
         config.shared_everything_threads_enabled = shared_everything_threads.unwrap_or(false);
         config.gc_enabled = gc.unwrap_or(false);
         config.reference_types_enabled = config.gc_enabled
+            || stack_switching.unwrap_or(false)
             || self.module_config.function_references_enabled
             || reference_types.unwrap_or(false);
         config.extended_const_enabled = extended_const.unwrap_or(false);
-        config.exceptions_enabled = exceptions.unwrap_or(false);
+        config.exceptions_enabled = exceptions.or(stack_switching).unwrap_or(false);
         if multi_memory.unwrap_or(false) {
             config.max_memories = limits::MEMORIES_PER_MODULE as usize;
         } else {
@@ -298,6 +302,7 @@ impl Config {
         cfg.wasm.nan_canonicalization = Some(self.wasmtime.canonicalize_nans);
         cfg.wasm.reference_types = Some(self.module_config.config.reference_types_enabled);
         cfg.wasm.simd = Some(self.module_config.config.simd_enabled);
+        cfg.wasm.stack_switching = Some(self.module_config.stack_switching);
         cfg.wasm.tail_call = Some(self.module_config.config.tail_call_enabled);
         cfg.wasm.threads = Some(self.module_config.config.threads_enabled);
         cfg.wasm.shared_everything_threads =
@@ -664,6 +669,7 @@ impl WasmtimeConfig {
                 config.config.reference_types_enabled = false;
                 config.config.exceptions_enabled = false;
                 config.function_references_enabled = false;
+                config.stack_switching = false;
 
                 // Winch's SIMD implementations require AVX and AVX2.
                 if self
