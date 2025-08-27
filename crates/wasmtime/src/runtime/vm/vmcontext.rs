@@ -1453,6 +1453,17 @@ pub union ValRaw {
     ///
     /// This value is always stored in a little-endian format.
     exnref: u32,
+
+    /// A WebAssembly `contref` value (or one of its subtypes).
+    ///
+    /// The payload here is a compressed pointer value which is
+    /// runtime-defined. This is one of the main points of unsafety about the
+    /// `ValRaw` type as the validity of the pointer here is not easily verified
+    /// and must be preserved by carefully calling the correct functions
+    /// throughout the runtime.
+    ///
+    /// This value is always stored in a little-endian format.
+    contref: u32,
 }
 
 // The `ValRaw` type is matched as `wasmtime_val_raw_t` in the C API so these
@@ -1595,6 +1606,13 @@ impl ValRaw {
         ValRaw { exnref: r.to_le() }
     }
 
+    /// Creates a WebAssembly `contref` value
+    #[inline]
+    pub fn contref(r: u32) -> ValRaw {
+        assert!(cfg!(feature = "gc") || r == 0);
+        ValRaw { contref: r.to_le() }
+    }
+
     /// Gets the WebAssembly `i32` value
     #[inline]
     pub fn get_i32(&self) -> i32 {
@@ -1665,6 +1683,14 @@ impl ValRaw {
         let exnref = u32::from_le(unsafe { self.exnref });
         assert!(cfg!(feature = "gc") || exnref == 0);
         exnref
+    }
+
+    /// Gets the WebAssembly `contref` value
+    #[inline]
+    pub fn get_contref(&self) -> u32 {
+        let contref = u32::from_le(unsafe { self.contref });
+        assert!(cfg!(feature = "gc") || contref == 0);
+        contref
     }
 }
 

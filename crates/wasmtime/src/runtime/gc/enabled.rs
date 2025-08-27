@@ -3,6 +3,7 @@
 
 mod anyref;
 mod arrayref;
+mod contref;
 mod eqref;
 mod exnref;
 mod externref;
@@ -12,6 +13,7 @@ mod structref;
 
 pub use anyref::*;
 pub use arrayref::*;
+pub use contref::*;
 pub use eqref::*;
 pub use exnref::*;
 pub use externref::*;

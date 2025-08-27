@@ -40,15 +40,10 @@ pub const VM_GC_HEADER_TYPE_INDEX_OFFSET: u32 = 4;
 /// Get the byte size of the given Wasm type when it is stored inside the GC
 /// heap.
 pub fn byte_size_of_wasm_ty_in_gc_heap(ty: &WasmStorageType) -> u32 {
-    use crate::{WasmHeapType::*, WasmRefType};
     match ty {
         WasmStorageType::I8 => 1,
         WasmStorageType::I16 => 2,
         WasmStorageType::Val(ty) => match ty {
-            WasmValType::Ref(WasmRefType {
-                nullable: _,
-                heap_type: ConcreteCont(_) | Cont,
-            }) => unimplemented!("Stack switching feature not compatbile with GC, yet"),
             WasmValType::I32 | WasmValType::F32 | WasmValType::Ref(_) => 4,
             WasmValType::I64 | WasmValType::F64 => 8,
             WasmValType::V128 => 16,
@@ -227,17 +222,16 @@ pub trait GcTypeLayouts {
 
     /// Get this collector's layout for the given composite type.
     ///
-    /// Returns `None` if the type is a function type, as functions are not
-    /// managed by the GC.
+    /// Returns `None` if the type is not managed by the GC. Currently, this
+    /// includes function types and continuation types. Note that continuation
+    /// types are planned to be GC-managed in the future (see #10248).
     fn gc_layout(&self, ty: &WasmCompositeType) -> Option<GcLayout> {
         assert!(!ty.shared);
         match &ty.inner {
             WasmCompositeInnerType::Array(ty) => Some(self.array_layout(ty).into()),
             WasmCompositeInnerType::Struct(ty) => Some(self.struct_layout(ty).into()),
             WasmCompositeInnerType::Func(_) => None,
-            WasmCompositeInnerType::Cont(_) => {
-                unimplemented!("Stack switching feature not compatbile with GC, yet")
-            }
+            WasmCompositeInnerType::Cont(_) => None, // TODO(#10248): continuation objects will be GC-managed in the future
             WasmCompositeInnerType::Exn(ty) => Some(self.exn_layout(ty).into()),
         }
     }

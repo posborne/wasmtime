@@ -1,6 +1,6 @@
 use crate::store::{AutoAssertNoGc, StoreOpaque};
 use crate::{
-    AnyRef, ArrayRef, AsContext, AsContextMut, ExnRef, ExternRef, Func, HeapType, RefType, Rooted,
+    AnyRef, ArrayRef, AsContext, AsContextMut, ContRef, ExnRef, ExternRef, Func, HeapType, RefType, Rooted,
     StructRef, V128, ValType, prelude::*,
 };
 use core::ptr;
@@ -50,6 +50,9 @@ pub enum Val {
 
     /// An exception reference.
     ExnRef(Option<Rooted<ExnRef>>),
+
+    /// A continuation reference.
+    ContRef(Option<Rooted<ContRef>>),
 }
 
 macro_rules! accessors {
@@ -118,7 +121,7 @@ impl Val {
             WasmHeapTopType::Extern => Val::ExternRef(None),
             WasmHeapTopType::Any => Val::AnyRef(None),
             WasmHeapTopType::Exn => Val::ExnRef(None),
-            WasmHeapTopType::Cont => todo!(), // FIXME(#10248)
+            WasmHeapTopType::Cont => Val::ContRef(None),
         }
     }
 
@@ -177,6 +180,8 @@ impl Val {
             Val::AnyRef(Some(a)) => ValType::Ref(RefType::new(false, a._ty(store)?)),
             Val::ExnRef(None) => ValType::NULLEXNREF,
             Val::ExnRef(Some(e)) => ValType::Ref(RefType::new(false, e._ty(store)?.into())),
+            Val::ContRef(None) => ValType::NULLCONTREF,
+            Val::ContRef(Some(c)) => ValType::Ref(RefType::new(false, c._ty(store)?.into())),
         })
     }
 
@@ -207,6 +212,7 @@ impl Val {
             }
             (Val::AnyRef(a), ValType::Ref(ref_ty)) => Ref::from(*a)._matches_ty(store, ref_ty)?,
             (Val::ExnRef(e), ValType::Ref(ref_ty)) => Ref::from(*e)._matches_ty(store, ref_ty)?,
+            (Val::ContRef(c), ValType::Ref(ref_ty)) => Ref::from(*c)._matches_ty(store, ref_ty)?,
 
             (Val::I32(_), _)
             | (Val::I64(_), _)
@@ -216,7 +222,8 @@ impl Val {
             | (Val::FuncRef(_), _)
             | (Val::ExternRef(_), _)
             | (Val::AnyRef(_), _)
-            | (Val::ExnRef(_), _) => false,
+            | (Val::ExnRef(_), _)
+            | (Val::ContRef(_), _) => false,
         })
     }
 
@@ -264,6 +271,10 @@ impl Val {
                 None => 0,
                 Some(e) => e.to_raw(store)?,
             })),
+            Val::ContRef(c) => Ok(ValRaw::contref(match c {
+                None => 0,
+                Some(c) => c.to_raw(store)?,
+            })),
             Val::FuncRef(f) => Ok(ValRaw::funcref(match f {
                 Some(f) => f.to_raw(store),
                 None => ptr::null_mut(),
@@ -306,10 +317,11 @@ impl Val {
 
                     HeapType::NoFunc => Ref::Func(None),
 
-                    HeapType::NoCont | HeapType::ConcreteCont(_) | HeapType::Cont => {
-                        // TODO(#10248): Required to support stack switching in the embedder API.
-                        unimplemented!()
-                    }
+                    HeapType::NoCont => Ref::Cont(None),
+
+                    HeapType::ConcreteCont(_) | HeapType::Cont => {
+                        ContRef::_from_raw(store, raw.get_contref()).into()
+                    },
 
                     HeapType::Extern => ExternRef::_from_raw(store, raw.get_externref()).into(),
 
@@ -362,6 +374,7 @@ impl Val {
             Val::ExternRef(e) => Some(Ref::Extern(e)),
             Val::AnyRef(a) => Some(Ref::Any(a)),
             Val::ExnRef(e) => Some(Ref::Exn(e)),
+            Val::ContRef(c) => Some(Ref::Cont(c)),
             Val::I32(_) | Val::I64(_) | Val::F32(_) | Val::F64(_) | Val::V128(_) => None,
         }
     }
@@ -505,6 +518,9 @@ impl Val {
             Val::ExnRef(Some(e)) => e.comes_from_same_store(store),
             Val::ExnRef(None) => true,
 
+            Val::ContRef(Some(c)) => c.comes_from_same_store(store),
+            Val::ContRef(None) => true,
+
             // Integers, floats, and vectors have no association with any
             // particular store, so they're always considered as "yes I came
             // from that store",
@@ -549,6 +565,7 @@ impl From<Ref> for Val {
             Ref::Func(f) => Val::FuncRef(f),
             Ref::Any(a) => Val::AnyRef(a),
             Ref::Exn(e) => Val::ExnRef(e),
+            Ref::Cont(c) => Val::ContRef(c),
         }
     }
 }
@@ -743,6 +760,13 @@ pub enum Ref {
     /// `catch_ref` clauses on `try_table` instructions, or as
     /// allocated via the host API.
     Exn(Option<Rooted<ExnRef>>),
+
+    /// A continuation reference.
+    ///
+    /// The `ContRef` type represents WebAssembly `contref`
+    /// values. These are references to continuation objects used
+    /// for stack switching operations.
+    Cont(Option<Rooted<ContRef>>),
 }
 
 impl From<Func> for Ref {
@@ -829,6 +853,20 @@ impl From<Option<Rooted<ExnRef>>> for Ref {
     }
 }
 
+impl From<Rooted<ContRef>> for Ref {
+    #[inline]
+    fn from(c: Rooted<ContRef>) -> Ref {
+        Ref::Cont(Some(c))
+    }
+}
+
+impl From<Option<Rooted<ContRef>>> for Ref {
+    #[inline]
+    fn from(c: Option<Rooted<ContRef>>) -> Ref {
+        Ref::Cont(c)
+    }
+}
+
 impl Ref {
     /// Create a null reference to the given heap type.
     #[inline]
@@ -846,8 +884,8 @@ impl Ref {
     #[inline]
     pub fn is_null(&self) -> bool {
         match self {
-            Ref::Any(None) | Ref::Extern(None) | Ref::Func(None) | Ref::Exn(None) => true,
-            Ref::Any(Some(_)) | Ref::Extern(Some(_)) | Ref::Func(Some(_)) | Ref::Exn(Some(_)) => {
+            Ref::Any(None) | Ref::Extern(None) | Ref::Func(None) | Ref::Exn(None) | Ref::Cont(None) => true,
+            Ref::Any(Some(_)) | Ref::Extern(Some(_)) | Ref::Func(Some(_)) | Ref::Exn(Some(_)) | Ref::Cont(Some(_)) => {
                 false
             }
         }
@@ -1025,6 +1063,9 @@ impl Ref {
 
                 Ref::Exn(None) => HeapType::None,
                 Ref::Exn(Some(e)) => e._ty(store)?.into(),
+
+                Ref::Cont(None) => HeapType::NoCont,
+                Ref::Cont(Some(c)) => c._ty(store)?.into(),
             },
         ))
     }
@@ -1087,6 +1128,13 @@ impl Ref {
                 e._matches_ty(store, &ty.heap_type())?
             }
             (Ref::Exn(_), _) => false,
+
+            (Ref::Cont(_), HeapType::Cont) => true,
+            (Ref::Cont(None), HeapType::NoCont | HeapType::ConcreteCont(_)) => true,
+            (Ref::Cont(Some(c)), HeapType::ConcreteCont(_)) => {
+                c._matches_ty(store, &ty.heap_type())?
+            }
+            (Ref::Cont(_), _) => false,
         })
     }
 
@@ -1115,6 +1163,8 @@ impl Ref {
             Ref::Any(None) => true,
             Ref::Exn(Some(e)) => e.comes_from_same_store(store),
             Ref::Exn(None) => true,
+            Ref::Cont(Some(c)) => c.comes_from_same_store(store),
+            Ref::Cont(None) => true,
         }
     }
 }

@@ -70,6 +70,14 @@ pub fn generate_global_export(
                 let new = new.as_ref();
                 global.write_gc_ref(&mut store, new);
             }
+            Val::ContRef(c) => {
+                let new = match c {
+                    None => None,
+                    Some(c) => Some(c.try_gc_ref(&store)?.unchecked_copy()),
+                };
+                let new = new.as_ref();
+                global.write_gc_ref(&mut store, new);
+            }
         }
     }
 

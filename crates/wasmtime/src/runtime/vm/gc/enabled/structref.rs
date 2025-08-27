@@ -225,6 +225,19 @@ impl VMStructRef {
                 data.write_u32(offset, gc_ref.map_or(0, |r| r.as_raw_u32()));
             }
 
+            Val::ContRef(c) => {
+                let raw = data.read_u32(offset);
+                let mut gc_ref = VMGcRef::from_raw_u32(raw);
+                let c = match c {
+                    Some(c) => Some(c.try_gc_ref(store)?.unchecked_copy()),
+                    None => None,
+                };
+                let store = store.require_gc_store_mut()?;
+                store.write_gc_ref(&mut gc_ref, c.as_ref());
+                let data = store.gc_object_data(self.as_gc_ref());
+                data.write_u32(offset, gc_ref.map_or(0, |r| r.as_raw_u32()));
+            }
+
             Val::FuncRef(f) => {
                 let f = f.map(|f| SendSyncPtr::new(f.vm_func_ref(store)));
                 let gcstore = store.require_gc_store_mut()?;
@@ -368,6 +381,16 @@ pub(crate) fn initialize_field_impl(
                 .write_u32(offset, x);
         }
         Val::ExnRef(x) => {
+            let x = match x {
+                None => 0,
+                Some(x) => x.try_clone_gc_ref(store)?.as_raw_u32(),
+            };
+            store
+                .require_gc_store_mut()?
+                .gc_object_data(gc_ref)
+                .write_u32(offset, x);
+        }
+        Val::ContRef(x) => {
             let x = match x {
                 None => 0,
                 Some(x) => x.try_clone_gc_ref(store)?.as_raw_u32(),
