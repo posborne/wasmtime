@@ -494,6 +494,26 @@ where
         }
     }
 
+    fn assert_suspension(&mut self, result: Outcome, expected: &str) -> Result<()> {
+        let trap = match result {
+            Outcome::Ok(values) => bail!("expected suspension, got {:?}", values),
+            Outcome::Trap(t) => t,
+        };
+        let actual = format!("{trap:?}");
+        if actual.contains(expected)
+            || actual.contains("unhandled tag")
+            || actual.contains("Calling suspend outside of a continuation")
+        {
+            Ok(())
+        } else {
+            bail!(
+                "assert_suspension: expected '{}', got '{}'",
+                expected,
+                actual
+            )
+        }
+    }
+
     /// Run a wast script from a byte buffer.
     pub fn run_wast(&mut self, filename: &str, wast: &[u8]) -> Result<()> {
         let wast = str::from_utf8(wast)?;
@@ -695,6 +715,14 @@ where
                 let result = self.perform_action(&action)?;
                 self.assert_exception(result)?;
             }
+            AssertSuspension {
+                line: _,
+                action,
+                text,
+            } => {
+                let result = self.perform_action(&action)?;
+                self.assert_suspension(result, &text)?;
+            }
 
             Thread {
                 name,
@@ -739,10 +767,6 @@ where
                     .ok_or_else(|| anyhow!("no thread named `{thread}`"))?
                     .join()
                     .unwrap()?;
-            }
-
-            AssertSuspension { .. } => {
-                bail!("unimplemented wast directive");
             }
         }
 

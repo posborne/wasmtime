@@ -233,6 +233,10 @@ impl VMStructRef {
                     .gc_object_data(self.as_gc_ref())
                     .write_u32(offset, id.into_raw());
             }
+            Val::ContRef(_) => {
+                // TODO(#10248): Implement struct continuation reference field handling
+                return Err(anyhow::anyhow!("setting continuation references in struct fields not yet supported"));
+            }
         }
         Ok(())
     }
@@ -385,6 +389,10 @@ pub(crate) fn initialize_field_impl(
             gcstore
                 .gc_object_data(gc_ref)
                 .write_u32(offset, id.into_raw());
+        }
+        Val::ContRef(_) => {
+            // TODO(#10248): Implement struct continuation reference field init handling
+            return Err(anyhow::anyhow!("initializing continuation references in struct fields not yet supported"));
         }
     }
     Ok(())

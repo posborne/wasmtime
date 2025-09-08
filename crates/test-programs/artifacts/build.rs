@@ -98,6 +98,7 @@ impl Artifacts {
             // Generate a component from each test.
             if test.name == "dwarf_imported_memory"
                 || test.name == "dwarf_shared_memory"
+                || test.name == "dwarf_stack_switch"
                 || test.name.starts_with("nn_witx")
             {
                 continue;
