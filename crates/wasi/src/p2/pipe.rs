@@ -14,6 +14,7 @@ use std::task::{Context, Poll};
 use tokio::io::{self, AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
 use wasmtime::format_err;
+use wasmtime::component::{FixedHostHeapUsage, HostHeapUsage};
 use wasmtime_wasi_io::{
     poll::Pollable,
     streams::{InputStream, OutputStream, StreamError},
@@ -332,6 +333,37 @@ impl OutputStream for ClosedOutputStream {
 impl Pollable for ClosedOutputStream {
     async fn ready(&mut self) {}
 }
+
+impl HostHeapUsage for MemoryInputPipe {
+    fn host_heap_usage(&self) -> usize {
+        // The buffer is Arc-shared; report our share of the inline struct size.
+        // TODO: Arc::strong_count could be used to amortise the actual buffer
+        // allocation across all holders, but size_of_val is a correct lower bound.
+        core::mem::size_of_val(self)
+    }
+}
+
+impl HostHeapUsage for MemoryOutputPipe {
+    fn host_heap_usage(&self) -> usize {
+        // TODO: the Arc<Mutex<BytesMut>> holds the actual buffered bytes but
+        // is shared with the writer; a future improvement is to report
+        // capacity / strong_count.
+        core::mem::size_of_val(self)
+    }
+}
+
+impl HostHeapUsage for AsyncReadStream {
+    fn host_heap_usage(&self) -> usize {
+        // TODO: the mpsc channel and background task buffer can hold up to one
+        // full read worth of bytes; a future improvement would be to query the
+        // channel state and add the buffered byte count.
+        core::mem::size_of_val(self)
+    }
+}
+
+impl FixedHostHeapUsage for SinkOutputStream {}
+impl FixedHostHeapUsage for ClosedInputStream {}
+impl FixedHostHeapUsage for ClosedOutputStream {}
 
 #[cfg(test)]
 mod test {

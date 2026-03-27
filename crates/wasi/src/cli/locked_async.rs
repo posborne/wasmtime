@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll, ready};
 use tokio::io::{self, AsyncRead, AsyncWrite};
 use tokio::sync::{Mutex, OwnedMutexGuard};
+use wasmtime::component::HostHeapUsage;
 use wasmtime_wasi_io::streams::{InputStream, OutputStream};
 
 trait SharedHandleReady: Send + Sync + 'static {
@@ -347,5 +348,21 @@ where
                 _ => unreachable!(),
             }
         }
+    }
+}
+
+impl HostHeapUsage for AsyncStdinStream {
+    fn host_heap_usage(&self) -> usize {
+        // TODO: the Arc<Mutex<AsyncReadStream>> holds a channel buffer; see
+        // AsyncReadStream for the same caveat.
+        core::mem::size_of_val(self)
+    }
+}
+
+impl HostHeapUsage for AsyncStdoutStream {
+    fn host_heap_usage(&self) -> usize {
+        // TODO: the Arc<Mutex<AsyncWriteStream>> holds a pending write deque;
+        // see AsyncWriteStream for the same caveat.
+        core::mem::size_of_val(self)
     }
 }

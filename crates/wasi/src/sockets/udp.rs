@@ -8,6 +8,7 @@ use crate::sockets::{SocketAddrCheck, SocketAddressFamily, WasiSocketsCtx};
 use cap_net_ext::AddressFamily;
 use io_lifetimes::AsSocketlike as _;
 use io_lifetimes::raw::{FromRawSocketlike as _, IntoRawSocketlike as _};
+use wasmtime::component::{FixedHostHeapUsage, HostHeapUsage};
 use rustix::io::Errno;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -363,3 +364,10 @@ async fn send_to(
         Ok(())
     }
 }
+
+// UdpSocket transitions between fixed-size enum variants (UdpState); its
+// inline size is constant regardless of which state is active.
+// TODO: the Arc<UdpSocket> wraps a kernel socket; the kernel-side
+// send/receive buffers are not tracked. A future improvement would be to
+// query SO_RCVBUF / SO_SNDBUF and switch to a manual HostHeapUsage impl.
+impl FixedHostHeapUsage for UdpSocket {}

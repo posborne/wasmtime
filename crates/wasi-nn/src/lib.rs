@@ -10,6 +10,7 @@ pub use registry::{GraphRegistry, InMemoryRegistry};
 use std::path::Path;
 use std::sync::Arc;
 use wasmtime::format_err;
+use wasmtime::component::{FixedHostHeapUsage, HostHeapUsage};
 
 /// Construct an in-memory registry from the available backends and a list of
 /// `(<backend name>, <graph directory>)`. This assumes graphs can be loaded
@@ -160,3 +161,28 @@ impl Tensor {
         }
     }
 }
+
+impl HostHeapUsage for Graph {
+    fn host_heap_usage(&self) -> usize {
+        // TODO: the Arc-ed backend graph may hold significant model data; a
+        // future improvement would be to add a `heap_usage` method to
+        // `BackendGraph` so the backend can report it.
+        core::mem::size_of_val(self)
+    }
+}
+
+impl HostHeapUsage for Tensor {
+    fn host_heap_usage(&self) -> usize {
+        core::mem::size_of_val(self)
+            + self.dimensions.capacity() * core::mem::size_of::<u32>()
+            + self.data.capacity()
+    }
+}
+
+// ExecutionContext wraps a Box<dyn BackendExecutionContext>; the Box pointer
+// is fixed-size and compute_with_io does not reallocate it.
+// TODO: the boxed backend execution context may hold significant intermediate
+// state (e.g. inference buffers); a future improvement would be to add a
+// `heap_usage` method to `BackendExecutionContext` and switch to a manual
+// HostHeapUsage impl.
+impl FixedHostHeapUsage for ExecutionContext {}

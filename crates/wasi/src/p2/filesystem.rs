@@ -7,6 +7,7 @@ use bytes::{Bytes, BytesMut};
 use std::io;
 use std::mem;
 use wasmtime::format_err;
+use wasmtime::component::HostHeapUsage;
 
 pub type FsResult<T> = Result<T, FsError>;
 
@@ -416,5 +417,29 @@ impl IntoIterator for ReaddirIterator {
 
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_inner().unwrap()
+    }
+}
+
+impl HostHeapUsage for ReaddirIterator {
+    fn host_heap_usage(&self) -> usize {
+        // TODO: the boxed iterator may hold significant buffered state
+        // (e.g. a Vec of directory entries read ahead from the OS). A future
+        // improvement would be to add a heap_usage method to the iterator
+        // trait or track at the call site.
+        core::mem::size_of_val(self)
+    }
+}
+
+impl HostHeapUsage for FileInputStream {
+    fn host_heap_usage(&self) -> usize {
+        // TODO: the DataAvailable state holds a Bytes buffer; a future
+        // improvement would be to inspect the state and add its capacity.
+        core::mem::size_of_val(self)
+    }
+}
+
+impl HostHeapUsage for FileOutputStream {
+    fn host_heap_usage(&self) -> usize {
+        core::mem::size_of_val(self)
     }
 }

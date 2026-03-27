@@ -5,6 +5,7 @@ use std::io::{self, Write};
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use tokio::io::AsyncWrite;
+use wasmtime::component::FixedHostHeapUsage;
 use wasmtime_wasi_io::streams::OutputStream;
 
 // Implementation for tokio::io::Stdout
@@ -120,3 +121,7 @@ impl AsyncWrite for StdioOutputStream {
 impl p2::Pollable for StdioOutputStream {
     async fn ready(&mut self) {}
 }
+
+// StdioOutputStream is an enum of two unit variants; writes go directly to the
+// OS stdout/stderr handles with no buffering in user space.
+impl FixedHostHeapUsage for StdioOutputStream {}

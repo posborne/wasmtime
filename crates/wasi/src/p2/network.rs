@@ -2,6 +2,7 @@ use crate::TrappableError;
 use crate::p2::bindings::sockets::network::ErrorCode;
 use crate::sockets::{SocketAddrCheck, SocketAddrUse};
 use std::net::SocketAddr;
+use wasmtime::component::HostHeapUsage;
 
 pub type SocketResult<T> = Result<T, SocketError>;
 
@@ -66,5 +67,13 @@ impl Network {
         reason: SocketAddrUse,
     ) -> std::io::Result<()> {
         self.socket_addr_check.check(addr, reason).await
+    }
+}
+
+impl HostHeapUsage for Network {
+    fn host_heap_usage(&self) -> usize {
+        // TODO: SocketAddrCheck contains an Arc<dyn Fn(...)> whose closure
+        // allocation is not tracked here.
+        core::mem::size_of_val(self)
     }
 }

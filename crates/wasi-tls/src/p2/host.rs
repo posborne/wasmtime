@@ -1,5 +1,5 @@
-use wasmtime::Result;
-use wasmtime::component::Resource;
+use anyhow::Result;
+use wasmtime::component::{FixedHostHeapUsage, HostHeapUsage, Resource};
 use wasmtime_wasi::async_trait;
 use wasmtime_wasi::p2::Pollable;
 use wasmtime_wasi::p2::{DynInputStream, DynOutputStream, DynPollable, IoError};
@@ -112,9 +112,10 @@ impl<'a> bindings::types::HostFutureClientStreams for WasiTlsCtxView<'a> {
             >,
         >,
     > {
-        let future = self.table.get_mut(&this)?;
+        let output = self.table.get_mut(&this)?.0.get();
+        // Drop the borrow before calling self.table.push() below.
 
-        let result = match future.0.get() {
+        let result = match output {
             FutureOutput::Ready(Ok((client, input, output))) => {
                 let client = self.table.push(client)?;
                 let input = self.table.push_child(input, &client)?;
@@ -155,3 +156,21 @@ impl<'a> bindings::types::HostClientConnection for WasiTlsCtxView<'a> {
         Ok(())
     }
 }
+
+impl HostHeapUsage for HostClientHandshake {
+    fn host_heap_usage(&self) -> usize {
+        // TODO: server_name String capacity and the size of the boxed TlsTransport
+        // implementation are not tracked beyond the inline struct.
+        core::mem::size_of_val(self) + self.server_name.capacity()
+    }
+}
+
+// HostFutureClientStreams transitions between fixed-size enum states internally.
+// TODO: the WasiFuture may hold buffered TLS handshake data and intermediate
+// stream state that is not tracked here.
+impl FixedHostHeapUsage for HostFutureClientStreams {}
+
+// HostClientConnection wraps Arc<Mutex<WriteState<IO>>>; close() transitions
+// the state machine but does not change the inline struct size.
+// TODO: delegates to the inner AsyncWriteStream; see that type's impl.
+impl FixedHostHeapUsage for HostClientConnection {}

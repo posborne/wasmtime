@@ -2,6 +2,7 @@ use crate::poll::Pollable;
 use alloc::boxed::Box;
 use bytes::Bytes;
 use wasmtime::Result;
+use wasmtime::component::HostHeapUsage;
 
 /// `Pollable::ready()` for `InputStream` and `OutputStream` may return
 /// prematurely due to `io::ErrorKind::WouldBlock`.
@@ -15,7 +16,7 @@ const MAX_BLOCKING_ATTEMPTS: u8 = 10;
 /// Host trait for implementing the `wasi:io/streams.input-stream` resource: A
 /// bytestream which can be read from.
 #[async_trait::async_trait]
-pub trait InputStream: Pollable {
+pub trait InputStream: Pollable + HostHeapUsage {
     /// Reads up to `size` bytes, returning a buffer holding these bytes on
     /// success.
     ///
@@ -123,7 +124,7 @@ impl From<wasmtime::component::ResourceTableError> for StreamError {
 /// Host trait for implementing the `wasi:io/streams.output-stream` resource:
 /// A bytestream which can be written to.
 #[async_trait::async_trait]
-pub trait OutputStream: Pollable {
+pub trait OutputStream: Pollable + HostHeapUsage {
     /// Write bytes after obtaining a permit to write those bytes
     ///
     /// Prior to calling [`write`](Self::write) the caller must call
@@ -281,6 +282,16 @@ impl Pollable for Box<dyn InputStream> {
         (**self).ready().await
     }
 }
+
+/// The `Box<dyn InputStream>` fat pointer is two words wide and does not grow
+/// through stream operations; the inner concrete type's heap is tracked by its
+/// own `HostHeapUsage` impl at push time.
+impl wasmtime::component::FixedHostHeapUsage for Box<dyn InputStream> {}
+
+/// The `Box<dyn OutputStream>` fat pointer is two words wide and does not grow
+/// through stream operations; the inner concrete type's heap is tracked by its
+/// own `HostHeapUsage` impl at push time.
+impl wasmtime::component::FixedHostHeapUsage for Box<dyn OutputStream> {}
 
 pub type DynInputStream = Box<dyn InputStream>;
 

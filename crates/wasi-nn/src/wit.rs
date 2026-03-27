@@ -19,7 +19,7 @@ use crate::{Backend, Registry};
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::{fmt, str::FromStr};
-use wasmtime::component::{HasData, Resource, ResourceTable};
+use wasmtime::component::{HasData, HostHeapUsage, Resource, ResourceTable};
 use wasmtime::format_err;
 
 /// Capture the state necessary for calling into the backend ML libraries.
@@ -87,6 +87,13 @@ impl From<wasmtime::component::ResourceTableError> for Error {
             code: ErrorCode::Trap,
             data: error.into(),
         }
+    }
+}
+
+/// `Error` contains an `anyhow::Error` whose boxed allocation size is opaque.
+impl HostHeapUsage for Error {
+    fn host_heap_usage(&self) -> usize {
+        core::mem::size_of_val(self)
     }
 }
 
@@ -254,9 +261,14 @@ impl generated::inference::HostGraphExecutionContext for WasiNnView<'_> {
             named_tensors.push(crate::backend::NamedTensor { name, tensor });
         }
 
-        let exec_context = &mut self.table.get_mut(&exec_context)?;
+        let exec_context = self.table.get_mut(&exec_context)?;
 
-        match exec_context.compute_with_io(named_tensors) {
+        let compute_result = exec_context.compute_with_io(named_tensors);
+        // Drop the borrow on exec_context before borrowing self.table again
+        // to push the output tensors.
+        drop(exec_context);
+
+        match compute_result {
             Ok(named_tensors) => {
                 let result = named_tensors
                     .into_iter()

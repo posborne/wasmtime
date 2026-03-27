@@ -3,7 +3,7 @@ use core::any::Any;
 use core::future::Future;
 use core::pin::Pin;
 use wasmtime::Result;
-use wasmtime::component::{Resource, ResourceTable};
+use wasmtime::component::{FixedHostHeapUsage, Resource, ResourceTable};
 
 pub type DynFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 pub type MakeFuture = for<'a> fn(&'a mut dyn Any) -> DynFuture<'a>;
@@ -117,3 +117,5 @@ where
 
     Ok(table.push_child(pollable, &resource)?)
 }
+
+impl FixedHostHeapUsage for DynPollable {}

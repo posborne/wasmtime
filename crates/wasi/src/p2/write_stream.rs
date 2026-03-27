@@ -4,6 +4,7 @@ use std::pin::pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 use wasmtime::format_err;
+use wasmtime::component::{FixedHostHeapUsage, HostHeapUsage};
 
 #[derive(Debug)]
 struct WorkerState {
@@ -209,5 +210,13 @@ impl OutputStream for AsyncWriteStream {
 impl Pollable for AsyncWriteStream {
     async fn ready(&mut self) {
         std::future::poll_fn(|cx| self.poll_ready(cx)).await
+    }
+}
+
+impl HostHeapUsage for AsyncWriteStream {
+    fn host_heap_usage(&self) -> usize {
+        // TODO: the Arc<Worker> holds a VecDeque<Bytes> of pending writes; a
+        // future improvement would be to sum the capacity of that deque.
+        core::mem::size_of_val(self)
     }
 }

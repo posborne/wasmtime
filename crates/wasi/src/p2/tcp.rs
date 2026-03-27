@@ -3,6 +3,7 @@ use crate::p2::{
     SocketResult, StreamError,
 };
 use crate::runtime::AbortOnDropJoinHandle;
+use wasmtime::component::{FixedHostHeapUsage, HostHeapUsage};
 use crate::sockets::TcpSocket;
 use io_lifetimes::AsSocketlike;
 use rustix::io::Errno;
@@ -355,4 +356,20 @@ fn try_lock_for_socket<T>(mutex: &Mutex<T>) -> SocketResult<tokio::sync::MutexGu
             "concurrent access to resource not supported"
         ))
     })
+}
+
+impl HostHeapUsage for TcpReadStream {
+    fn host_heap_usage(&self) -> usize {
+        // TODO: the Arc<Mutex<TcpReader>> may hold a pending read buffer;
+        // kernel-side socket buffers are not tracked.
+        core::mem::size_of_val(self)
+    }
+}
+
+impl HostHeapUsage for TcpWriteStream {
+    fn host_heap_usage(&self) -> usize {
+        // TODO: the Arc<Mutex<TcpWriter>> may hold pending write buffers;
+        // kernel-side socket buffers are not tracked.
+        core::mem::size_of_val(self)
+    }
 }

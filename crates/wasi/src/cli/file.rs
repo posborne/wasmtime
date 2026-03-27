@@ -6,6 +6,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::io::{self, AsyncRead, AsyncWrite};
+use wasmtime::component::FixedHostHeapUsage;
 
 /// This implementation will yield output streams that block on writes, and
 /// output directly to a file. If truly async output is required,
@@ -152,3 +153,8 @@ impl AsyncRead for InputFile {
         }
     }
 }
+
+// OutputFile and InputFile wrap Arc<std::fs::File>: the file descriptor is an
+// OS resource; all data lives in kernel space.
+impl FixedHostHeapUsage for OutputFile {}
+impl FixedHostHeapUsage for InputFile {}

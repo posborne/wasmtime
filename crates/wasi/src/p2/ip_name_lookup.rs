@@ -8,7 +8,7 @@ use std::net::ToSocketAddrs;
 use std::pin::Pin;
 use std::vec;
 use wasmtime::Result;
-use wasmtime::component::Resource;
+use wasmtime::component::{HostHeapUsage, Resource, ResourceTableError};
 use wasmtime_wasi_io::poll::{DynPollable, Pollable, subscribe};
 
 use crate::sockets::util::{from_ipv4_addr, from_ipv6_addr, parse_host};
@@ -43,24 +43,37 @@ impl HostResolveAddressStream for WasiSocketsCtxView<'_> {
         &mut self,
         resource: Resource<ResolveAddressStream>,
     ) -> Result<Option<IpAddress>, SocketError> {
-        let stream: &mut ResolveAddressStream = self.table.get_mut(&resource)?;
-        loop {
-            match stream {
-                ResolveAddressStream::Waiting(future) => {
-                    match crate::runtime::poll_noop(Pin::new(future)) {
-                        Some(result) => {
-                            *stream = ResolveAddressStream::Done(result.map(|v| v.into_iter()));
+        let mut result: Result<Option<IpAddress>, SocketError> =
+            Err(ErrorCode::WouldBlock.into());
+        self.table
+            .update_resource(&resource, |stream| loop {
+                match stream {
+                    ResolveAddressStream::Waiting(future) => {
+                        match crate::runtime::poll_noop(Pin::new(future)) {
+                            Some(r) => {
+                                *stream =
+                                    ResolveAddressStream::Done(r.map(|v| v.into_iter()));
+                            }
+                            None => {
+                                result = Err(ErrorCode::WouldBlock.into());
+                                return;
+                            }
                         }
-                        None => return Err(ErrorCode::WouldBlock.into()),
+                    }
+                    ResolveAddressStream::Done(slot @ Err(_)) => {
+                        let err = mem::replace(slot, Ok(Vec::new().into_iter()))
+                            .unwrap_err();
+                        result = Err(err.into());
+                        return;
+                    }
+                    ResolveAddressStream::Done(Ok(iter)) => {
+                        result = Ok(iter.next());
+                        return;
                     }
                 }
-                ResolveAddressStream::Done(slot @ Err(_)) => {
-                    mem::replace(slot, Ok(Vec::new().into_iter()))?;
-                    unreachable!();
-                }
-                ResolveAddressStream::Done(Ok(iter)) => return Ok(iter.next()),
-            }
-        }
+            })
+            .map_err(|e: ResourceTableError| SocketError::trap(anyhow::Error::from(e)))?;
+        result
     }
 
     fn subscribe(
@@ -101,5 +114,13 @@ fn blocking_resolve(host: &url::Host) -> Result<Vec<IpAddress>, SocketError> {
 
             Ok(addresses)
         }
+    }
+}
+
+impl HostHeapUsage for ResolveAddressStream {
+    fn host_heap_usage(&self) -> usize {
+        // TODO: the Done variant holds a Vec<IpAddress> iterator whose
+        // backing allocation is not tracked here.
+        core::mem::size_of_val(self)
     }
 }

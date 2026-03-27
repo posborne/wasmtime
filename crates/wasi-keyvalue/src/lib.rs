@@ -81,7 +81,7 @@ mod generated {
 use self::generated::wasi::keyvalue;
 use std::collections::HashMap;
 use wasmtime::Result;
-use wasmtime::component::{HasData, Resource, ResourceTable, ResourceTableError};
+use wasmtime::component::{HasData, HostHeapUsage, Resource, ResourceTable, ResourceTableError};
 
 #[doc(hidden)]
 pub enum Error {
@@ -99,6 +99,19 @@ impl From<ResourceTableError> for Error {
 #[doc(hidden)]
 pub struct Bucket {
     in_memory_data: HashMap<String, Vec<u8>>,
+}
+
+impl HostHeapUsage for Bucket {
+    fn host_heap_usage(&self) -> usize {
+        // Account for the inline struct, then the heap allocated by each
+        // key/value pair stored in the map.
+        core::mem::size_of_val(self)
+            + self
+                .in_memory_data
+                .iter()
+                .map(|(k, v)| k.capacity() + v.capacity())
+                .sum::<usize>()
+    }
 }
 
 /// Builder-style structure used to create a [`WasiKeyValueCtx`].
@@ -181,25 +194,25 @@ impl keyvalue::store::Host for WasiKeyValue<'_> {
 
 impl keyvalue::store::HostBucket for WasiKeyValue<'_> {
     fn get(&mut self, bucket: Resource<Bucket>, key: String) -> Result<Option<Vec<u8>>, Error> {
-        let bucket = self.table.get_mut(&bucket)?;
-        Ok(bucket.in_memory_data.get(&key).cloned())
+        Ok(self.table.get(&bucket)?.in_memory_data.get(&key).cloned())
     }
 
     fn set(&mut self, bucket: Resource<Bucket>, key: String, value: Vec<u8>) -> Result<(), Error> {
-        let bucket = self.table.get_mut(&bucket)?;
-        bucket.in_memory_data.insert(key, value);
+        self.table.update_resource(&bucket, |b| {
+            b.in_memory_data.insert(key, value);
+        })?;
         Ok(())
     }
 
     fn delete(&mut self, bucket: Resource<Bucket>, key: String) -> Result<(), Error> {
-        let bucket = self.table.get_mut(&bucket)?;
-        bucket.in_memory_data.remove(&key);
+        self.table.update_resource(&bucket, |b| {
+            b.in_memory_data.remove(&key);
+        })?;
         Ok(())
     }
 
     fn exists(&mut self, bucket: Resource<Bucket>, key: String) -> Result<bool, Error> {
-        let bucket = self.table.get_mut(&bucket)?;
-        Ok(bucket.in_memory_data.contains_key(&key))
+        Ok(self.table.get(&bucket)?.in_memory_data.contains_key(&key))
     }
 
     fn list_keys(
@@ -207,7 +220,7 @@ impl keyvalue::store::HostBucket for WasiKeyValue<'_> {
         bucket: Resource<Bucket>,
         cursor: Option<u64>,
     ) -> Result<keyvalue::store::KeyResponse, Error> {
-        let bucket = self.table.get_mut(&bucket)?;
+        let bucket = self.table.get(&bucket)?;
         let keys: Vec<String> = bucket.in_memory_data.keys().cloned().collect();
         let cursor = cursor.unwrap_or(0) as usize;
         let keys_slice = &keys[cursor..];
@@ -230,18 +243,22 @@ impl keyvalue::atomics::Host for WasiKeyValue<'_> {
         key: String,
         delta: u64,
     ) -> Result<u64, Error> {
-        let bucket = self.table.get_mut(&bucket)?;
-        let value = bucket
-            .in_memory_data
-            .entry(key.clone())
-            .or_insert("0".to_string().into_bytes());
-        let current_value = String::from_utf8(value.clone())
-            .map_err(|e| Error::Other(e.to_string()))?
-            .parse::<u64>()
-            .map_err(|e| Error::Other(e.to_string()))?;
-        let new_value = current_value + delta;
-        *value = new_value.to_string().into_bytes();
-        Ok(new_value)
+        let mut result: Result<u64, Error> = Err(Error::Other("increment not called".into()));
+        self.table.update_resource(&bucket, |b| {
+            let value = b
+                .in_memory_data
+                .entry(key.clone())
+                .or_insert("0".to_string().into_bytes());
+            result = String::from_utf8(value.clone())
+                .map_err(|e| Error::Other(e.to_string()))
+                .and_then(|s| s.parse::<u64>().map_err(|e| Error::Other(e.to_string())))
+                .map(|current| {
+                    let new_value = current + delta;
+                    *value = new_value.to_string().into_bytes();
+                    new_value
+                });
+        })?;
+        result
     }
 }
 
@@ -251,7 +268,7 @@ impl keyvalue::batch::Host for WasiKeyValue<'_> {
         bucket: Resource<Bucket>,
         keys: Vec<String>,
     ) -> Result<Vec<Option<(String, Vec<u8>)>>, Error> {
-        let bucket = self.table.get_mut(&bucket)?;
+        let bucket = self.table.get(&bucket)?;
         Ok(keys
             .into_iter()
             .map(|key| {
@@ -268,18 +285,20 @@ impl keyvalue::batch::Host for WasiKeyValue<'_> {
         bucket: Resource<Bucket>,
         key_values: Vec<(String, Vec<u8>)>,
     ) -> Result<(), Error> {
-        let bucket = self.table.get_mut(&bucket)?;
-        for (key, value) in key_values {
-            bucket.in_memory_data.insert(key, value);
-        }
+        self.table.update_resource(&bucket, |b| {
+            for (key, value) in key_values {
+                b.in_memory_data.insert(key, value);
+            }
+        })?;
         Ok(())
     }
 
     fn delete_many(&mut self, bucket: Resource<Bucket>, keys: Vec<String>) -> Result<(), Error> {
-        let bucket = self.table.get_mut(&bucket)?;
-        for key in keys {
-            bucket.in_memory_data.remove(&key);
-        }
+        self.table.update_resource(&bucket, |b| {
+            for key in keys {
+                b.in_memory_data.remove(&key);
+            }
+        })?;
         Ok(())
     }
 }

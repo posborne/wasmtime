@@ -5,7 +5,7 @@ use fs_set_times::SystemTimeSpec;
 use std::collections::hash_map;
 use std::sync::Arc;
 use tracing::debug;
-use wasmtime::component::{HasData, Resource, ResourceTable};
+use wasmtime::component::{HasData, HostHeapUsage, Resource, ResourceTable};
 use wasmtime::error::Context as _;
 
 /// A helper struct which implements [`HasData`] for the `wasi:filesystem` APIs.
@@ -1165,5 +1165,15 @@ impl WasiFilesystemCtxView<'_> {
             results.push((fd, name));
         }
         Ok(results)
+    }
+}
+
+impl HostHeapUsage for Descriptor {
+    fn host_heap_usage(&self) -> usize {
+        // File and Dir both wrap Arc<cap_std::fs::File/Dir>, which are OS
+        // file descriptor handles. The Arc itself is pointer-sized; the
+        // underlying OS resource lives in kernel space and is not tracked
+        // here.
+        core::mem::size_of_val(self)
     }
 }

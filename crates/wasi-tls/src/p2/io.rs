@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::task::{Poll, ready};
 use std::{future::Future, mem, pin::Pin};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use wasmtime::component::HostHeapUsage;
 use tokio::sync::Mutex;
 use wasmtime::Result;
 use wasmtime_wasi::async_trait;
@@ -407,5 +408,13 @@ where
             }
             _ => {}
         }
+    }
+}
+
+impl<IO: Send + 'static> HostHeapUsage for AsyncWriteStream<IO> {
+    fn host_heap_usage(&self) -> usize {
+        // TODO: the Arc<Mutex<WriteState<IO>>> may hold a pending write buffer
+        // and the underlying IO resource; those are not tracked here.
+        core::mem::size_of_val(self)
     }
 }

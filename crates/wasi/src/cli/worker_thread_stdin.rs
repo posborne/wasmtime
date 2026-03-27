@@ -37,6 +37,7 @@ use wasmtime_wasi_io::{
     poll::Pollable,
     streams::{InputStream, StreamError},
 };
+use wasmtime::component::FixedHostHeapUsage;
 
 // Implementation for tokio::io::Stdin
 impl IsTerminal for tokio::io::Stdin {
@@ -285,3 +286,6 @@ impl WasiStdinAsyncRead {
         }
     }
 }
+
+// WasiStdin is a unit struct; all stdin state is held in a global singleton.
+impl FixedHostHeapUsage for WasiStdin {}
