@@ -100,19 +100,14 @@ struct TableEntry {
     parent: Option<u32>,
     /// The indices of any children of this entry.
     children: BTreeSet<u32>,
-    /// The cached host heap usage of this entry at the time it was pushed (or last updated via
-    /// `update_resource`). This value is used when deleting the entry to correctly decrement the
-    /// table's total, even if the resource was mutated via `get_mut` in the meantime.
-    host_heap_usage: usize,
 }
 
 impl TableEntry {
-    fn new(entry: Box<dyn Any + Send>, parent: Option<u32>, host_heap_usage: usize) -> Self {
+    fn new(entry: Box<dyn Any + Send>, parent: Option<u32>) -> Self {
         Self {
             entry,
             parent,
             children: BTreeSet::new(),
-            host_heap_usage,
         }
     }
     fn add_child(&mut self, child: u32) {
@@ -226,6 +221,36 @@ impl ResourceTable {
         Ok(())
     }
 
+    /// Adjust the table's running total to account for a resource whose cached
+    /// size has changed from `old_usage` to `new_usage`.
+    ///
+    /// When `new_usage > old_usage` the growth is checked against the
+    /// configured maximum before being applied; if the limit would be exceeded
+    /// the counter is still updated (so subsequent calls see accurate state) and
+    /// [`ResourceTableError::HostMemoryLimitExceeded`] is returned.  Shrinks
+    /// are always applied unconditionally.
+    fn update_usage(
+        &mut self,
+        old_usage: usize,
+        new_usage: usize,
+    ) -> Result<(), ResourceTableError> {
+        if new_usage >= old_usage {
+            let delta = new_usage - old_usage;
+            if let Some(max) = self.max_host_heap_usage {
+                let projected = self.current_host_heap_usage.saturating_add(delta);
+                if projected > max {
+                    self.current_host_heap_usage = projected;
+                    return Err(ResourceTableError::HostMemoryLimitExceeded);
+                }
+            }
+            self.current_host_heap_usage = self.current_host_heap_usage.saturating_add(delta);
+        } else {
+            let delta = old_usage - new_usage;
+            self.current_host_heap_usage = self.current_host_heap_usage.saturating_sub(delta);
+        }
+        Ok(())
+    }
+
     /// Inserts a new value `T` into this table, returning a corresponding
     /// `Resource<T>` which can be used to refer to it after it was inserted.
     pub fn push<T>(&mut self, entry: T) -> Result<Resource<T>, ResourceTableError>
@@ -234,7 +259,7 @@ impl ResourceTable {
     {
         let usage = entry.host_heap_usage();
         self.check_and_add_usage(usage)?;
-        let idx = self.push_(TableEntry::new(Box::new(entry), None, usage))?;
+        let idx = self.push_(TableEntry::new(Box::new(entry), None))?;
         Ok(Resource::new_own(idx))
     }
 
@@ -265,7 +290,6 @@ impl ResourceTable {
                         entry: Box::new(Tombstone),
                         parent: None,
                         children: BTreeSet::new(),
-                        host_heap_usage: 0,
                     },
                 },
             ) {
@@ -351,7 +375,7 @@ impl ResourceTable {
         self.check_and_add_usage(usage)?;
         let parent = parent.rep();
         self.occupied(parent)?;
-        let child = self.push_(TableEntry::new(Box::new(entry), Some(parent), usage))?;
+        let child = self.push_(TableEntry::new(Box::new(entry), Some(parent)))?;
         self.occupied_mut(parent)?.add_child(child);
         Ok(Resource::new_own(child))
     }
@@ -472,37 +496,17 @@ impl ResourceTable {
             .entry
             .downcast_mut::<T>()
             .ok_or(ResourceTableError::WrongType)?;
-        let old_usage = entry.host_heap_usage;
+        let old_usage = t.host_heap_usage();
         updater(t);
         let new_usage = t.host_heap_usage();
 
-        // Update cached value in the entry.
-        entry.host_heap_usage = new_usage;
-
-        // Adjust the table total.
-        if new_usage >= old_usage {
-            let delta = new_usage - old_usage;
-            if let Some(max) = self.max_host_heap_usage {
-                let projected = self.current_host_heap_usage.saturating_add(delta);
-                if projected > max {
-                    // Still apply the delta so accounting remains correct, then error.
-                    self.current_host_heap_usage = projected;
-                    return Err(ResourceTableError::HostMemoryLimitExceeded);
-                }
-            }
-            self.current_host_heap_usage = self.current_host_heap_usage.saturating_add(delta);
-        } else {
-            let delta = old_usage - new_usage;
-            self.current_host_heap_usage = self.current_host_heap_usage.saturating_sub(delta);
-        }
-
-        Ok(())
+        self.update_usage(old_usage, new_usage)
     }
 
     /// Remove the specified entry from the table.
     pub fn delete<T>(&mut self, resource: Resource<T>) -> Result<T, ResourceTableError>
     where
-        T: Any,
+        T: Any + HostHeapUsage,
     {
         self.delete_maybe_debug(resource, DELETE_WITH_TOMBSTONE)
     }
@@ -513,14 +517,16 @@ impl ResourceTable {
         debug: bool,
     ) -> Result<T, ResourceTableError>
     where
-        T: Any,
+        T: Any + HostHeapUsage,
     {
         debug_assert!(resource.owned());
         let entry = self.delete_entry(resource.rep(), debug)?;
-        // Decrement the cached usage for this entry from the table total.
-        self.current_host_heap_usage = self
-            .current_host_heap_usage
-            .saturating_sub(entry.host_heap_usage);
+        // Sample the usage from the value before consuming the entry.
+        let usage = entry
+            .entry
+            .downcast_ref::<T>()
+            .map_or(0, |t| t.host_heap_usage());
+        let _ = self.update_usage(usage, 0);
         match entry.entry.downcast() {
             Ok(t) => Ok(*t),
             Err(_e) => Err(ResourceTableError::WrongType),
