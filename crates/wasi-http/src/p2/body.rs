@@ -688,11 +688,30 @@ impl HostHeapUsage for HostIncomingBodyStream {
     }
 }
 
-// HostIncomingBody, HostFutureTrailers and HostOutgoingBody are mutated via
-// get_mut() by the upstream host code.  Their inline struct sizes are constant
-// (all heap is behind pointers), so FixedHostHeapUsage is correct.
-// TODO: switch mutable call sites to update_resource and add HostHeapUsage
-// to account for the inner hyper body / mpsc-channel allocations.
-impl FixedHostHeapUsage for HostIncomingBody {}
-impl FixedHostHeapUsage for HostFutureTrailers {}
-impl FixedHostHeapUsage for HostOutgoingBody {}
+// HostIncomingBody, HostFutureTrailers and HostOutgoingBody are variable-size
+// types whose mutable call sites use update_resource.
+// TODO: the inner hyper body / mpsc-channel allocations are opaque and not
+// yet tracked; size_of_val is a correct lower bound.
+impl HostHeapUsage for HostIncomingBody {
+    fn host_heap_usage(&self) -> usize {
+        core::mem::size_of_val(self)
+    }
+}
+
+impl HostHeapUsage for HostFutureTrailers {
+    fn host_heap_usage(&self) -> usize {
+        // TODO: the Waiting variant contains an HostIncomingBody whose inner
+        // hyper body heap is not tracked here.
+        core::mem::size_of_val(self)
+    }
+}
+
+impl HostHeapUsage for HostOutgoingBody {
+    fn host_heap_usage(&self) -> usize {
+        // body_output_stream is Option<Box<dyn OutputStream>>; the box pointer
+        // is fixed-size from this side (OutputStream impls are separately
+        // tracked when pushed as child resources). The mpsc channel and
+        // oneshot sender are also fixed-size pointers.
+        core::mem::size_of_val(self)
+    }
+}

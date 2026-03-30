@@ -201,13 +201,9 @@ impl types::HostIncomingRequest for WasiHttpCtxView<'_> {
         &mut self,
         id: Resource<HostIncomingRequest>,
     ) -> wasmtime::Result<Result<Resource<HostIncomingBody>, ()>> {
-        let req = self.table.get_mut(&id)?;
-        match req.body.take() {
-            Some(body) => {
-                let id = self.table.push(body)?;
-                Ok(Ok(id))
-            }
-
+        let body = self.table.update_resource(&id, |req| req.body.take())?;
+        match body {
+            Some(body) => Ok(Ok(self.table.push(body)?)),
             None => Ok(Err(())),
         }
     }
@@ -244,15 +240,14 @@ impl types::HostOutgoingRequest for WasiHttpCtxView<'_> {
     ) -> wasmtime::Result<Result<Resource<HostOutgoingBody>, ()>> {
         let buffer_chunks = self.hooks.outgoing_body_buffer_chunks();
         let chunk_size = self.hooks.outgoing_body_chunk_size();
+
         let req = self
             .table
-            .get_mut(&request)
+            .get(&request)
             .context("[outgoing_request_write] getting request")?;
-
         if req.body.is_some() {
             return Ok(Err(()));
         }
-
         let size = match get_content_length(&req.headers) {
             Ok(size) => size,
             Err(..) => return Ok(Err(())),
@@ -261,13 +256,13 @@ impl types::HostOutgoingRequest for WasiHttpCtxView<'_> {
         let (host_body, hyper_body) =
             HostOutgoingBody::new(StreamContext::Request, size, buffer_chunks, chunk_size);
 
-        req.body = Some(hyper_body);
+        self.table
+            .update_resource(&request, |req| req.body = Some(hyper_body))
+            .context("[outgoing_request_write] setting body")?;
 
         // The output stream will necessarily outlive the request, because we could be still
         // writing to the stream after `outgoing-handler.handle` is called.
-        let outgoing_body = self.table.push(host_body)?;
-
-        Ok(Ok(outgoing_body))
+        Ok(Ok(self.table.push(host_body)?))
     }
 
     fn drop(&mut self, request: Resource<HostOutgoingRequest>) -> wasmtime::Result<()> {
@@ -287,16 +282,13 @@ impl types::HostOutgoingRequest for WasiHttpCtxView<'_> {
         request: wasmtime::component::Resource<types::OutgoingRequest>,
         method: Method,
     ) -> wasmtime::Result<Result<(), ()>> {
-        let req = self.table.get_mut(&request)?;
-
         if let Method::Other(s) = &method {
             if let Err(_) = http::Method::from_str(s) {
                 return Ok(Err(()));
             }
         }
-
-        req.method = method;
-
+        self.table
+            .update_resource(&request, |req| req.method = method)?;
         Ok(Ok(()))
     }
 
@@ -312,16 +304,13 @@ impl types::HostOutgoingRequest for WasiHttpCtxView<'_> {
         request: wasmtime::component::Resource<types::OutgoingRequest>,
         path_with_query: Option<String>,
     ) -> wasmtime::Result<Result<(), ()>> {
-        let req = self.table.get_mut(&request)?;
-
         if let Some(s) = path_with_query.as_ref() {
             if let Err(_) = http::uri::PathAndQuery::from_str(s) {
                 return Ok(Err(()));
             }
         }
-
-        req.path_with_query = path_with_query;
-
+        self.table
+            .update_resource(&request, |req| req.path_with_query = path_with_query)?;
         Ok(Ok(()))
     }
 
@@ -337,16 +326,13 @@ impl types::HostOutgoingRequest for WasiHttpCtxView<'_> {
         request: wasmtime::component::Resource<types::OutgoingRequest>,
         scheme: Option<Scheme>,
     ) -> wasmtime::Result<Result<(), ()>> {
-        let req = self.table.get_mut(&request)?;
-
         if let Some(types::Scheme::Other(s)) = scheme.as_ref() {
             if let Err(_) = http::uri::Scheme::from_str(s.as_str()) {
                 return Ok(Err(()));
             }
         }
-
-        req.scheme = scheme;
-
+        self.table
+            .update_resource(&request, |req| req.scheme = scheme)?;
         Ok(Ok(()))
     }
 
@@ -362,16 +348,13 @@ impl types::HostOutgoingRequest for WasiHttpCtxView<'_> {
         request: wasmtime::component::Resource<types::OutgoingRequest>,
         authority: Option<String>,
     ) -> wasmtime::Result<Result<(), ()>> {
-        let req = self.table.get_mut(&request)?;
-
         if let Some(s) = authority.as_ref() {
             if let Err(_) = http::uri::Authority::from_str(s.as_str()) {
                 return Ok(Err(()));
             }
         }
-
-        req.authority = authority;
-
+        self.table
+            .update_resource(&request, |req| req.authority = authority)?;
         Ok(Ok(()))
     }
 
@@ -449,17 +432,12 @@ impl types::HostIncomingResponse for WasiHttpCtxView<'_> {
         &mut self,
         response: Resource<HostIncomingResponse>,
     ) -> wasmtime::Result<Result<Resource<HostIncomingBody>, ()>> {
-        let r = self
+        let body = self
             .table
-            .get_mut(&response)
+            .update_resource(&response, |r| r.body.take())
             .context("[incoming_response_consume] getting response")?;
-
-        match r.body.take() {
-            Some(body) => {
-                let id = self.table.push(body)?;
-                Ok(Ok(id))
-            }
-
+        match body {
+            Some(body) => Ok(Ok(self.table.push(body)?)),
             None => Ok(Err(())),
         }
     }
@@ -486,29 +464,32 @@ impl types::HostFutureTrailers for WasiHttpCtxView<'_> {
         id: Resource<HostFutureTrailers>,
     ) -> wasmtime::Result<Option<Result<Result<Option<Resource<Trailers>>, types::ErrorCode>, ()>>>
     {
-        let trailers = self.table.get_mut(&id)?;
-        match trailers {
-            HostFutureTrailers::Waiting { .. } => return Ok(None),
-            HostFutureTrailers::Consumed => return Ok(Some(Err(()))),
-            HostFutureTrailers::Done(_) => {}
-        };
+        let res = self.table.update_resource(&id, |trailers| {
+            match trailers {
+                HostFutureTrailers::Waiting { .. } | HostFutureTrailers::Consumed => None,
+                HostFutureTrailers::Done(_) => {
+                    match std::mem::replace(trailers, HostFutureTrailers::Consumed) {
+                        HostFutureTrailers::Done(res) => Some(res),
+                        _ => unreachable!(),
+                    }
+                }
+            }
+        })?;
 
-        let res = match std::mem::replace(trailers, HostFutureTrailers::Consumed) {
-            HostFutureTrailers::Done(res) => res,
-            _ => unreachable!(),
-        };
-
-        let mut fields = match res {
-            Ok(Some(fields)) => fields,
-            Ok(None) => return Ok(Some(Ok(Ok(None)))),
-            Err(e) => return Ok(Some(Ok(Err(e)))),
-        };
-
-        remove_forbidden_headers(self.hooks, &mut fields);
-
-        let ts = self.table.push(FieldMap::new_immutable(fields))?;
-
-        Ok(Some(Ok(Ok(Some(ts)))))
+        match res {
+            None => match self.table.get(&id)? {
+                HostFutureTrailers::Waiting { .. } => return Ok(None),
+                HostFutureTrailers::Consumed => return Ok(Some(Err(()))),
+                HostFutureTrailers::Done(_) => unreachable!(),
+            },
+            Some(Ok(None)) => return Ok(Some(Ok(Ok(None)))),
+            Some(Ok(Some(mut fields))) => {
+                remove_forbidden_headers(self.hooks, &mut fields);
+                let ts = self.table.push(FieldMap::new_immutable(fields))?;
+                return Ok(Some(Ok(Ok(Some(ts)))));
+            }
+            Some(Err(e)) => return Ok(Some(Ok(Err(e)))),
+        }
     }
 }
 
@@ -517,15 +498,16 @@ impl types::HostIncomingBody for WasiHttpCtxView<'_> {
         &mut self,
         id: Resource<HostIncomingBody>,
     ) -> wasmtime::Result<Result<Resource<DynInputStream>, ()>> {
-        let body = self.table.get_mut(&id)?;
-
-        if let Some(stream) = body.take_stream() {
-            let stream: DynInputStream = Box::new(stream);
-            let stream = self.table.push_child(stream, &id)?;
-            return Ok(Ok(stream));
+        let stream = self
+            .table
+            .update_resource(&id, |body| body.take_stream())?;
+        match stream {
+            Some(stream) => {
+                let stream: DynInputStream = Box::new(stream);
+                Ok(Ok(self.table.push_child(stream, &id)?))
+            }
+            None => Ok(Err(())),
         }
-
-        Ok(Err(()))
     }
 
     fn finish(
@@ -566,12 +548,11 @@ impl types::HostOutgoingResponse for WasiHttpCtxView<'_> {
     ) -> wasmtime::Result<Result<Resource<HostOutgoingBody>, ()>> {
         let buffer_chunks = self.hooks.outgoing_body_buffer_chunks();
         let chunk_size = self.hooks.outgoing_body_chunk_size();
-        let resp = self.table.get_mut(&id)?;
 
+        let resp = self.table.get(&id)?;
         if resp.body.is_some() {
             return Ok(Err(()));
         }
-
         let size = match get_content_length(&resp.headers) {
             Ok(size) => size,
             Err(..) => return Ok(Err(())),
@@ -580,11 +561,10 @@ impl types::HostOutgoingResponse for WasiHttpCtxView<'_> {
         let (host, body) =
             HostOutgoingBody::new(StreamContext::Response, size, buffer_chunks, chunk_size);
 
-        resp.body.replace(body);
+        self.table
+            .update_resource(&id, |resp| resp.body.replace(body))?;
 
-        let id = self.table.push(host)?;
-
-        Ok(Ok(id))
+        Ok(Ok(self.table.push(host)?))
     }
 
     fn status_code(
@@ -599,13 +579,12 @@ impl types::HostOutgoingResponse for WasiHttpCtxView<'_> {
         id: Resource<HostOutgoingResponse>,
         status: types::StatusCode,
     ) -> wasmtime::Result<Result<(), ()>> {
-        let resp = self.table.get_mut(&id)?;
-
-        match http::StatusCode::from_u16(status) {
-            Ok(status) => resp.status = status,
+        let http_status = match http::StatusCode::from_u16(status) {
+            Ok(s) => s,
             Err(_) => return Ok(Err(())),
         };
-
+        self.table
+            .update_resource(&id, |resp| resp.status = http_status)?;
         Ok(Ok(()))
     }
 
@@ -635,25 +614,37 @@ impl types::HostFutureIncomingResponse for WasiHttpCtxView<'_> {
     ) -> wasmtime::Result<
         Option<Result<Result<Resource<HostIncomingResponse>, types::ErrorCode>, ()>>,
     > {
-        let resp = self.table.get_mut(&id)?;
-
-        match resp {
-            HostFutureIncomingResponse::Pending(_) => return Ok(None),
-            HostFutureIncomingResponse::Consumed => return Ok(Some(Err(()))),
-            HostFutureIncomingResponse::Ready(_) => {}
-        }
-
-        let resp =
-            match std::mem::replace(resp, HostFutureIncomingResponse::Consumed).unwrap_ready() {
-                Err(e) => {
-                    // Trapping if it's not possible to downcast to an wasi-http error
-                    let e = e.downcast::<types::ErrorCode>()?;
-                    return Ok(Some(Ok(Err(e))));
+        // Atomically transition to Consumed and extract the inner result.
+        let ready = self.table.update_resource(&id, |resp| {
+            match resp {
+                HostFutureIncomingResponse::Pending(_) | HostFutureIncomingResponse::Consumed => {
+                    None
                 }
+                HostFutureIncomingResponse::Ready(_) => Some(
+                    std::mem::replace(resp, HostFutureIncomingResponse::Consumed)
+                        .unwrap_ready(),
+                ),
+            }
+        })?;
 
-                Ok(Ok(resp)) => resp,
-                Ok(Err(e)) => return Ok(Some(Ok(Err(e)))),
-            };
+        let inner = match ready {
+            None => match self.table.get(&id)? {
+                HostFutureIncomingResponse::Pending(_) => return Ok(None),
+                HostFutureIncomingResponse::Consumed => return Ok(Some(Err(()))),
+                HostFutureIncomingResponse::Ready(_) => unreachable!(),
+            },
+            Some(inner) => inner,
+        };
+
+        let resp = match inner {
+            Err(e) => {
+                // Trapping if it's not possible to downcast to an wasi-http error
+                let e = e.downcast::<types::ErrorCode>()?;
+                return Ok(Some(Ok(Err(e))));
+            }
+            Ok(Ok(resp)) => resp,
+            Ok(Err(e)) => return Ok(Some(Ok(Err(e)))),
+        };
 
         let (mut parts, body) = resp.resp.into_parts();
         remove_forbidden_headers(self.hooks, &mut parts.headers);
@@ -687,12 +678,12 @@ impl types::HostOutgoingBody for WasiHttpCtxView<'_> {
         &mut self,
         id: Resource<HostOutgoingBody>,
     ) -> wasmtime::Result<Result<Resource<DynOutputStream>, ()>> {
-        let body = self.table.get_mut(&id)?;
-        if let Some(stream) = body.take_output_stream() {
-            let id = self.table.push_child(stream, &id)?;
-            Ok(Ok(id))
-        } else {
-            Ok(Err(()))
+        let stream = self
+            .table
+            .update_resource(&id, |body| body.take_output_stream())?;
+        match stream {
+            Some(stream) => Ok(Ok(self.table.push_child(stream, &id)?)),
+            None => Ok(Err(())),
         }
     }
 

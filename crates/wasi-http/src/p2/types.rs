@@ -11,7 +11,7 @@ use bytes::Bytes;
 use http_body_util::BodyExt;
 use hyper::body::Body;
 use std::time::Duration;
-use wasmtime::component::{FixedHostHeapUsage, Resource};
+use wasmtime::component::{FixedHostHeapUsage, HostHeapUsage, Resource};
 use wasmtime::{Result, bail};
 use wasmtime_wasi::p2::Pollable;
 use wasmtime_wasi::runtime::AbortOnDropJoinHandle;
@@ -304,20 +304,54 @@ impl Pollable for HostFutureIncomingResponse {
 // HostHeapUsage / FixedHostHeapUsage impls for all resource types
 // ---------------------------------------------------------------------------
 
-// The inline struct size of these types is constant even though they contain
-// heap-allocated fields (FieldMap is Arc-backed, Option<Body> is a pointer).
-// The upstream host code mutates them via get_mut(), which requires
-// FixedHostHeapUsage. TODO: switch the mutable call sites to update_resource
-// and implement HostHeapUsage to account for header heap.
-impl FixedHostHeapUsage for HostIncomingRequest {}
-impl FixedHostHeapUsage for HostOutgoingRequest {}
-impl FixedHostHeapUsage for HostIncomingResponse {}
-impl FixedHostHeapUsage for HostOutgoingResponse {}
+impl HostHeapUsage for HostIncomingRequest {
+    fn host_heap_usage(&self) -> usize {
+        // authority is a solely-owned String; account for its capacity.
+        // uri contains an internal String allocation; report its length as a
+        // lower bound since http::Uri doesn't expose its capacity.
+        // headers is Arc-backed (FieldMap) and not solely owned — not tracked.
+        // body is a child resource tracked separately when pushed.
+        core::mem::size_of_val(self)
+            + self.authority.capacity()
+            + self.uri.to_string().len()
+    }
+}
 
 // HostResponseOutparam holds only a oneshot::Sender (fat pointer / fixed size).
 impl FixedHostHeapUsage for HostResponseOutparam {}
 
+impl HostHeapUsage for HostOutgoingResponse {
+    fn host_heap_usage(&self) -> usize {
+        // headers is Arc-backed (FieldMap); body is an opaque hyper body.
+        // Report inline size only; both are not solely owned by this struct.
+        core::mem::size_of_val(self)
+    }
+}
+
+impl HostHeapUsage for HostOutgoingRequest {
+    fn host_heap_usage(&self) -> usize {
+        // authority and path_with_query are solely-owned Option<String>s.
+        // headers is Arc-backed (FieldMap); body is opaque.
+        core::mem::size_of_val(self)
+            + self.authority.as_ref().map_or(0, |s| s.capacity())
+            + self.path_with_query.as_ref().map_or(0, |s| s.capacity())
+    }
+}
+
 // HostRequestOptions contains only Option<Duration> fields; fixed size.
 impl FixedHostHeapUsage for HostRequestOptions {}
 
-impl FixedHostHeapUsage for HostFutureIncomingResponse {}
+impl HostHeapUsage for HostIncomingResponse {
+    fn host_heap_usage(&self) -> usize {
+        // headers is Arc-backed (FieldMap); body is tracked separately.
+        core::mem::size_of_val(self)
+    }
+}
+
+impl HostHeapUsage for HostFutureIncomingResponse {
+    fn host_heap_usage(&self) -> usize {
+        // TODO: the Pending/Ready variants hold a JoinHandle and a Result
+        // respectively; the heap behind those is opaque and not tracked.
+        core::mem::size_of_val(self)
+    }
+}
