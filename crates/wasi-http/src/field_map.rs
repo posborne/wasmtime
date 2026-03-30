@@ -4,6 +4,7 @@ use std::fmt;
 use std::ops::Deref;
 use std::sync::Arc;
 use wasmtime::Result;
+use wasmtime::component::FixedHostHeapUsage;
 
 /// A wrapper around [`http::HeaderMap`] which implements `wasi:http` semantics.
 ///
@@ -355,3 +356,8 @@ mod tests {
         Ok(())
     }
 }
+
+// FieldMap's inline struct size (Arc pointer + Limit + size counter) is
+// constant. The Arc-shared HeaderMap heap is not solely owned by this value
+// and is not tracked here.
+impl FixedHostHeapUsage for FieldMap {}

@@ -12,6 +12,7 @@ use std::task::{Context, Poll};
 use std::{pin::Pin, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 use wasmtime::format_err;
+use wasmtime::component::{FixedHostHeapUsage, HostHeapUsage};
 use wasmtime_wasi::p2::{InputStream, OutputStream, Pollable, StreamError};
 use wasmtime_wasi::runtime::{AbortOnDropJoinHandle, poll_noop};
 
@@ -673,3 +674,25 @@ impl Pollable for BodyWriteStream {
         let _ = self.writer.reserve().await;
     }
 }
+
+// BodyWriteStream holds an mpsc::Sender (two words) and a usize budget; its
+// inline size is constant and the channel's heap is owned by the BodyImpl
+// side, so Fixed is correct.
+impl FixedHostHeapUsage for BodyWriteStream {}
+
+impl HostHeapUsage for HostIncomingBodyStream {
+    fn host_heap_usage(&self) -> usize {
+        // TODO: the BodyWithTimeout inner hyper body and the tokio sleep timer
+        // hold backing heap that is not tracked here.
+        core::mem::size_of_val(self) + self.buffer.len()
+    }
+}
+
+// HostIncomingBody, HostFutureTrailers and HostOutgoingBody are mutated via
+// get_mut() by the upstream host code.  Their inline struct sizes are constant
+// (all heap is behind pointers), so FixedHostHeapUsage is correct.
+// TODO: switch mutable call sites to update_resource and add HostHeapUsage
+// to account for the inner hyper body / mpsc-channel allocations.
+impl FixedHostHeapUsage for HostIncomingBody {}
+impl FixedHostHeapUsage for HostFutureTrailers {}
+impl FixedHostHeapUsage for HostOutgoingBody {}

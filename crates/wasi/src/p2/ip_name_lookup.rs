@@ -72,7 +72,7 @@ impl HostResolveAddressStream for WasiSocketsCtxView<'_> {
                     }
                 }
             })
-            .map_err(|e: ResourceTableError| SocketError::trap(anyhow::Error::from(e)))?;
+            .map_err(|e: ResourceTableError| SocketError::trap(wasmtime::Error::from(e)))?;
         result
     }
 

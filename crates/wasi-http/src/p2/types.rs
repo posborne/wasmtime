@@ -11,7 +11,7 @@ use bytes::Bytes;
 use http_body_util::BodyExt;
 use hyper::body::Body;
 use std::time::Duration;
-use wasmtime::component::Resource;
+use wasmtime::component::{FixedHostHeapUsage, Resource};
 use wasmtime::{Result, bail};
 use wasmtime_wasi::p2::Pollable;
 use wasmtime_wasi::runtime::AbortOnDropJoinHandle;
@@ -299,3 +299,25 @@ impl Pollable for HostFutureIncomingResponse {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// HostHeapUsage / FixedHostHeapUsage impls for all resource types
+// ---------------------------------------------------------------------------
+
+// The inline struct size of these types is constant even though they contain
+// heap-allocated fields (FieldMap is Arc-backed, Option<Body> is a pointer).
+// The upstream host code mutates them via get_mut(), which requires
+// FixedHostHeapUsage. TODO: switch the mutable call sites to update_resource
+// and implement HostHeapUsage to account for header heap.
+impl FixedHostHeapUsage for HostIncomingRequest {}
+impl FixedHostHeapUsage for HostOutgoingRequest {}
+impl FixedHostHeapUsage for HostIncomingResponse {}
+impl FixedHostHeapUsage for HostOutgoingResponse {}
+
+// HostResponseOutparam holds only a oneshot::Sender (fat pointer / fixed size).
+impl FixedHostHeapUsage for HostResponseOutparam {}
+
+// HostRequestOptions contains only Option<Duration> fields; fixed size.
+impl FixedHostHeapUsage for HostRequestOptions {}
+
+impl FixedHostHeapUsage for HostFutureIncomingResponse {}

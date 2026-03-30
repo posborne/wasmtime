@@ -92,7 +92,8 @@ impl crate::p2::host::tcp::tcp::HostTcpSocket for WasiSocketsCtxView<'_> {
 
     fn finish_listen(&mut self, this: Resource<TcpSocket>) -> SocketResult<()> {
         let mut socket = self.table.borrow_mut(&this)?;
-        socket.finish_listen()?;
+        socket.finish_listen_p2()?;
+        socket.finish()?;
         Ok(())
     }
 

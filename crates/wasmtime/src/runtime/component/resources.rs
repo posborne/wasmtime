@@ -12,7 +12,6 @@ pub use host_tables::*;
 pub use ty::*;
 
 use crate::prelude::*;
-use crate::anyhow;
 
 /// Trait for types that can report their host heap memory usage.
 ///
@@ -123,12 +122,24 @@ impl FixedHostHeapUsage for f32 {}
 impl FixedHostHeapUsage for f64 {}
 impl FixedHostHeapUsage for char {}
 
+/// [`wasmtime::Error`] owns a heap-allocated boxed error value of unknown size.
+/// We report the inline pointer size only; the actual allocation is opaque.
+///
+/// TODO: if wasmtime::Error ever exposes a way to query the inner allocation
+/// size, use it here.
+impl HostHeapUsage for crate::Error {
+    fn host_heap_usage(&self) -> usize {
+        core::mem::size_of_val(self)
+    }
+}
+
 /// `anyhow::Error` owns a heap-allocated boxed error value of unknown size.
 /// We report the inline pointer size only; the actual allocation is opaque.
 ///
 /// TODO: if anyhow ever exposes a way to query the inner allocation size,
 /// use it here.
-impl HostHeapUsage for anyhow::Error {
+#[cfg(feature = "anyhow")]
+impl HostHeapUsage for ::anyhow::Error {
     fn host_heap_usage(&self) -> usize {
         core::mem::size_of_val(self)
     }
