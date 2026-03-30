@@ -8,7 +8,7 @@ use crate::sockets::util::{
 };
 use crate::sockets::{DEFAULT_TCP_BACKLOG, SocketAddressFamily, WasiSocketsCtx};
 use io_lifetimes::AsSocketlike as _;
-use wasmtime::component::FixedHostHeapUsage;
+use wasmtime::component::HostHeapUsage;
 use io_lifetimes::views::SocketlikeView;
 use rustix::io::Errno;
 use rustix::net::sockopt;
@@ -877,9 +877,12 @@ mod does_not_inherit_options {
     }
 }
 
-// TcpSocket transitions between fixed-size enum variants; the inline size of
-// the struct is constant regardless of which state is active.
-// TODO: the Listening/Connected states hold Arc<Tcp{Listener,Stream}>; the
-// kernel-side socket buffers are not tracked. A future improvement would be
-// to query SO_RCVBUF / SO_SNDBUF and switch to a manual HostHeapUsage impl.
-impl FixedHostHeapUsage for TcpSocket {}
+// TcpSocket's TcpState enum transitions between variants with different heap
+// footprints (e.g. Connecting holds a Box<dyn Future>, P2Streaming holds a
+// Box<P2TcpStreamingState>). It is not FixedHostHeapUsage.
+// TODO: inspect the active TcpState variant to report actual heap usage.
+impl HostHeapUsage for TcpSocket {
+    fn host_heap_usage(&self) -> usize {
+        core::mem::size_of_val(self)
+    }
+}

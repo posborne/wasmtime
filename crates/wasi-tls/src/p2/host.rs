@@ -112,7 +112,13 @@ impl<'a> bindings::types::HostFutureClientStreams for WasiTlsCtxView<'a> {
             >,
         >,
     > {
-        let output = self.table.get_mut(&this)?.0.get();
+        let output = self
+            .table
+            .get_any_mut(this.rep())?
+            .downcast_mut::<HostFutureClientStreams>()
+            .ok_or(wasmtime::component::ResourceTableError::WrongType)?
+            .0
+            .get();
         // Drop the borrow before calling self.table.push() below.
 
         let result = match output {
@@ -165,10 +171,16 @@ impl HostHeapUsage for HostClientHandshake {
     }
 }
 
-// HostFutureClientStreams transitions between fixed-size enum states internally.
-// TODO: the WasiFuture may hold buffered TLS handshake data and intermediate
-// stream state that is not tracked here.
-impl FixedHostHeapUsage for HostFutureClientStreams {}
+// HostFutureClientStreams contains a WasiFuture whose internal state
+// transitions between Pending(Box<dyn Future>), Ready(...), and Consumed,
+// each owning different amounts of heap.
+impl HostHeapUsage for HostFutureClientStreams {
+    fn host_heap_usage(&self) -> usize {
+        // TODO: inspect the WasiFuture state to report the actual heap owned
+        // by the pending future or ready values.
+        core::mem::size_of_val(self)
+    }
+}
 
 // HostClientConnection wraps Arc<Mutex<WriteState<IO>>>; close() transitions
 // the state machine but does not change the inline struct size.

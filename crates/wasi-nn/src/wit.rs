@@ -261,12 +261,13 @@ impl generated::inference::HostGraphExecutionContext for WasiNnView<'_> {
             named_tensors.push(crate::backend::NamedTensor { name, tensor });
         }
 
-        let exec_context = self.table.get_mut(&exec_context)?;
+        let exec_context = self
+            .table
+            .get_any_mut(exec_context.rep())?
+            .downcast_mut::<GraphExecutionContext>()
+            .ok_or(wasmtime::component::ResourceTableError::WrongType)?;
 
         let compute_result = exec_context.compute_with_io(named_tensors);
-        // Drop the borrow on exec_context before borrowing self.table again
-        // to push the output tensors.
-        drop(exec_context);
 
         match compute_result {
             Ok(named_tensors) => {

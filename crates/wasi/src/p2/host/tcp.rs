@@ -5,7 +5,7 @@ use crate::p2::bindings::{
 use crate::p2::{Pollable, SocketResult};
 use crate::sockets::{SocketAddrUse, TcpSocket, WasiSocketsCtxView};
 use std::net::SocketAddr;
-use wasmtime::component::Resource;
+use wasmtime::component::{Resource, ResourceTableError};
 use wasmtime_wasi_io::{
     poll::DynPollable,
     streams::{DynInputStream, DynOutputStream},
@@ -29,13 +29,13 @@ impl crate::p2::host::tcp::tcp::HostTcpSocket for WasiSocketsCtxView<'_> {
             .await?;
 
         // Bind to the address.
-        self.table.get_mut(&this)?.start_bind(local_address)?;
+        self.table.get_any_mut(this.rep())?.downcast_mut::<TcpSocket>().ok_or(ResourceTableError::WrongType)?.start_bind(local_address)?;
 
         Ok(())
     }
 
     fn finish_bind(&mut self, this: Resource<TcpSocket>) -> SocketResult<()> {
-        let socket = self.table.get_mut(&this)?;
+        let socket = self.table.get_any_mut(this.rep())?.downcast_mut::<TcpSocket>().ok_or(ResourceTableError::WrongType)?;
         socket.finish_bind()?;
         Ok(())
     }
@@ -55,7 +55,7 @@ impl crate::p2::host::tcp::tcp::HostTcpSocket for WasiSocketsCtxView<'_> {
             .await?;
 
         // Start connection
-        let socket = self.table.get_mut(&this)?;
+        let socket = self.table.get_any_mut(this.rep())?.downcast_mut::<TcpSocket>().ok_or(ResourceTableError::WrongType)?;
         let future = socket
             .start_connect(&remote_address)?
             .connect(remote_address);
@@ -68,7 +68,7 @@ impl crate::p2::host::tcp::tcp::HostTcpSocket for WasiSocketsCtxView<'_> {
         &mut self,
         this: Resource<TcpSocket>,
     ) -> SocketResult<(Resource<DynInputStream>, Resource<DynOutputStream>)> {
-        let socket = self.table.get_mut(&this)?;
+        let socket = self.table.get_any_mut(this.rep())?.downcast_mut::<TcpSocket>().ok_or(ResourceTableError::WrongType)?;
 
         let result = socket
             .take_pending_connect()?
@@ -81,15 +81,15 @@ impl crate::p2::host::tcp::tcp::HostTcpSocket for WasiSocketsCtxView<'_> {
     }
 
     fn start_listen(&mut self, this: Resource<TcpSocket>) -> SocketResult<()> {
-        let socket = self.table.get_mut(&this)?;
+        let socket = self.table.get_any_mut(this.rep())?.downcast_mut::<TcpSocket>().ok_or(ResourceTableError::WrongType)?;
 
         socket.start_listen_p2()?;
         Ok(())
     }
 
     fn finish_listen(&mut self, this: Resource<TcpSocket>) -> SocketResult<()> {
-        let socket = self.table.get_mut(&this)?;
-        socket.finish_listen_p2()?;
+        let socket = self.table.get_any_mut(this.rep())?.downcast_mut::<TcpSocket>().ok_or(ResourceTableError::WrongType)?;
+        socket.finish_listen()?;
         Ok(())
     }
 
@@ -101,7 +101,7 @@ impl crate::p2::host::tcp::tcp::HostTcpSocket for WasiSocketsCtxView<'_> {
         Resource<DynInputStream>,
         Resource<DynOutputStream>,
     )> {
-        let socket = self.table.get_mut(&this)?;
+        let socket = self.table.get_any_mut(this.rep())?.downcast_mut::<TcpSocket>().ok_or(ResourceTableError::WrongType)?;
 
         let mut tcp_socket = socket.accept()?.ok_or(ErrorCode::WouldBlock)?;
         let (input, output) = tcp_socket.p2_streams()?;
@@ -142,7 +142,7 @@ impl crate::p2::host::tcp::tcp::HostTcpSocket for WasiSocketsCtxView<'_> {
         this: Resource<TcpSocket>,
         value: u64,
     ) -> SocketResult<()> {
-        let socket = self.table.get_mut(&this)?;
+        let socket = self.table.get_any_mut(this.rep())?.downcast_mut::<TcpSocket>().ok_or(ResourceTableError::WrongType)?;
         socket.set_listen_backlog_size(value)?;
         Ok(())
     }
@@ -172,7 +172,7 @@ impl crate::p2::host::tcp::tcp::HostTcpSocket for WasiSocketsCtxView<'_> {
         this: Resource<TcpSocket>,
         value: u64,
     ) -> SocketResult<()> {
-        let socket = self.table.get_mut(&this)?;
+        let socket = self.table.get_any_mut(this.rep())?.downcast_mut::<TcpSocket>().ok_or(ResourceTableError::WrongType)?;
         socket.set_keep_alive_idle_time(value)?;
         Ok(())
     }
@@ -209,7 +209,7 @@ impl crate::p2::host::tcp::tcp::HostTcpSocket for WasiSocketsCtxView<'_> {
     }
 
     fn set_hop_limit(&mut self, this: Resource<TcpSocket>, value: u8) -> SocketResult<()> {
-        let socket = self.table.get_mut(&this)?;
+        let socket = self.table.get_any_mut(this.rep())?.downcast_mut::<TcpSocket>().ok_or(ResourceTableError::WrongType)?;
         socket.set_hop_limit(value)?;
         Ok(())
     }
@@ -224,7 +224,7 @@ impl crate::p2::host::tcp::tcp::HostTcpSocket for WasiSocketsCtxView<'_> {
         this: Resource<TcpSocket>,
         value: u64,
     ) -> SocketResult<()> {
-        let socket = self.table.get_mut(&this)?;
+        let socket = self.table.get_any_mut(this.rep())?.downcast_mut::<TcpSocket>().ok_or(ResourceTableError::WrongType)?;
         socket.set_receive_buffer_size(value)?;
         Ok(())
     }
@@ -235,7 +235,7 @@ impl crate::p2::host::tcp::tcp::HostTcpSocket for WasiSocketsCtxView<'_> {
     }
 
     fn set_send_buffer_size(&mut self, this: Resource<TcpSocket>, value: u64) -> SocketResult<()> {
-        let socket = self.table.get_mut(&this)?;
+        let socket = self.table.get_any_mut(this.rep())?.downcast_mut::<TcpSocket>().ok_or(ResourceTableError::WrongType)?;
         socket.set_send_buffer_size(value)?;
         Ok(())
     }
