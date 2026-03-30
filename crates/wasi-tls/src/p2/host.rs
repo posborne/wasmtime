@@ -112,13 +112,7 @@ impl<'a> bindings::types::HostFutureClientStreams for WasiTlsCtxView<'a> {
             >,
         >,
     > {
-        let output = self
-            .table
-            .get_any_mut(this.rep())?
-            .downcast_mut::<HostFutureClientStreams>()
-            .ok_or(wasmtime::component::ResourceTableError::WrongType)?
-            .0
-            .get();
+        let output = self.table.borrow_mut(&this)?.0.get();
         // Drop the borrow before calling self.table.push() below.
 
         let result = match output {

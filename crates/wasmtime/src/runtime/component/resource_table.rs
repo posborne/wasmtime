@@ -5,6 +5,7 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use core::any::Any;
 use core::fmt;
 use core::mem;
+use core::ops::{Deref, DerefMut};
 
 #[derive(Debug)]
 /// Errors returned by operations on `ResourceTable`
@@ -37,6 +38,72 @@ impl fmt::Display for ResourceTableError {
 }
 
 impl core::error::Error for ResourceTableError {}
+
+/// A mutable borrow of a variable-size resource from a [`ResourceTable`].
+///
+/// Returned by [`ResourceTable::borrow_mut`]. Derefs to `&mut T` for
+/// convenient access. When the mutation is complete, call [`finish`](Self::finish)
+/// to re-sample [`HostHeapUsage::host_heap_usage`] and update the table's
+/// running total. `finish()` returns `Err` if the new size exceeds the
+/// configured maximum — the mutation is not rolled back, but the caller
+/// can react immediately.
+///
+/// If `finish()` is not called before the guard is dropped, the accounting
+/// update is performed in `drop` as a safety net (but any limit-exceeded
+/// error is silently ignored since `drop` cannot return errors).
+pub struct ResourceBorrow<'a, T: HostHeapUsage> {
+    /// Raw pointer to the owning table for the drop fallback.
+    /// Valid for `'a`.
+    table: *mut ResourceTable,
+    /// The usage at the time the borrow was created.
+    usage_before: usize,
+    /// The mutable reference into the table entry.
+    value: &'a mut T,
+    /// Set to `true` once `finish()` has been called, so drop knows
+    /// not to double-update.
+    finished: bool,
+}
+
+impl<'a, T: HostHeapUsage> ResourceBorrow<'a, T> {
+    /// Complete the mutable borrow, re-sampling [`HostHeapUsage::host_heap_usage`]
+    /// and updating the table's running total.
+    ///
+    /// Returns [`ResourceTableError::HostMemoryLimitExceeded`] if the new usage
+    /// exceeds the configured limit (the counter is still updated to reflect
+    /// reality).
+    pub fn finish(mut self) -> Result<(), ResourceTableError> {
+        self.finished = true;
+        let new_usage = self.value.host_heap_usage();
+        // SAFETY: `table` is valid for `'a` and we hold exclusive access
+        // through `value`.
+        let table = unsafe { &mut *self.table };
+        table.update_usage(self.usage_before, new_usage)
+    }
+}
+
+impl<T: HostHeapUsage> Deref for ResourceBorrow<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        self.value
+    }
+}
+
+impl<T: HostHeapUsage> DerefMut for ResourceBorrow<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        self.value
+    }
+}
+
+impl<T: HostHeapUsage> Drop for ResourceBorrow<'_, T> {
+    fn drop(&mut self) {
+        if !self.finished {
+            let new_usage = self.value.host_heap_usage();
+            // SAFETY: `table` is valid for the lifetime of the borrow.
+            let table = unsafe { &mut *self.table };
+            let _ = table.update_usage(self.usage_before, new_usage);
+        }
+    }
+}
 
 /// The `ResourceTable` type maps a `Resource<T>` to its `T`.
 pub struct ResourceTable {
@@ -432,6 +499,7 @@ impl ResourceTable {
     ///
     /// For types whose heap footprint can vary with mutation (types that only
     /// implement [`HostHeapUsage`] but not [`FixedHostHeapUsage`]), use
+    /// [`borrow_mut`](ResourceTable::borrow_mut) or
     /// [`update_resource`](ResourceTable::update_resource) instead.
     pub fn get_mut<T: Any + Sized + FixedHostHeapUsage>(
         &mut self,
@@ -442,14 +510,53 @@ impl ResourceTable {
             .ok_or(ResourceTableError::WrongType)
     }
 
+    /// Get a tracked mutable borrow of a variable-size resource.
+    ///
+    /// Returns a [`ResourceBorrow<T>`] guard that derefs to `&mut T`. When the
+    /// mutation is complete, call [`ResourceBorrow::finish`] to update the
+    /// table's heap usage accounting. `finish()` returns `Err` if the new size
+    /// exceeds the configured limit.
+    ///
+    /// If the guard is dropped without calling `finish()`, the accounting is
+    /// still updated (as a safety net), but any limit-exceeded error is
+    /// silently ignored.
+    ///
+    /// For types that implement [`FixedHostHeapUsage`] (where mutation cannot
+    /// change the heap footprint), prefer the simpler
+    /// [`get_mut`](ResourceTable::get_mut) which returns `&mut T` directly.
+    pub fn borrow_mut<T: Any + Sized + HostHeapUsage>(
+        &mut self,
+        key: &Resource<T>,
+    ) -> Result<ResourceBorrow<'_, T>, ResourceTableError> {
+        let rep = key.rep();
+        let entry = self.occupied_mut(rep)?;
+        let value = entry
+            .entry
+            .downcast_mut::<T>()
+            .ok_or(ResourceTableError::WrongType)?;
+        let usage_before = value.host_heap_usage();
+        // SAFETY: we extend the lifetime of `value` from the entry borrow to
+        // `'_` (the lifetime of `&mut self`). This is valid because the guard
+        // holds exclusive access to the table for its lifetime — no other
+        // access to the table or this entry is possible while the guard lives.
+        let value: &mut T = unsafe { &mut *(value as *mut T) };
+        Ok(ResourceBorrow {
+            table: self as *mut ResourceTable,
+            usage_before,
+            value,
+            finished: false,
+        })
+    }
+
     /// Returns the raw `Any` at the `key` index provided.
     ///
     /// # Warning
     ///
     /// This method bypasses heap usage tracking entirely. Prefer
-    /// [`get_mut`](ResourceTable::get_mut) for [`FixedHostHeapUsage`] types or
-    /// [`update_resource`](ResourceTable::update_resource) for variable-size
-    /// types.
+    /// [`get_mut`](ResourceTable::get_mut) for [`FixedHostHeapUsage`] types,
+    /// [`borrow_mut`](ResourceTable::borrow_mut) for tracked variable-size
+    /// borrows, or [`update_resource`](ResourceTable::update_resource) for
+    /// closure-based mutation.
     ///
     /// Only use this when working with type-erased entries where the concrete
     /// type is not available at the call site.
@@ -844,6 +951,80 @@ mod tests {
         // Remove the limit — now the same push should succeed.
         table.set_max_host_heap_usage(None);
         table.push(Tracked(1)).unwrap();
+    }
+
+    // ---- borrow_mut / ResourceBorrow tests ----
+
+    #[test]
+    fn test_borrow_mut_finish_updates_counter() {
+        let mut table = ResourceTable::new();
+        let r = table.push(Tracked(100)).unwrap();
+        assert_eq!(table.current_host_heap_usage(), 100);
+
+        {
+            let mut guard = table.borrow_mut(&r).unwrap();
+            guard.0 = 250;
+            guard.finish().unwrap();
+        }
+        assert_eq!(table.current_host_heap_usage(), 250);
+
+        table.delete(r).unwrap();
+        assert_eq!(table.current_host_heap_usage(), 0);
+    }
+
+    #[test]
+    fn test_borrow_mut_finish_returns_error_on_over_limit() {
+        let mut table = ResourceTable::new();
+        table.set_max_host_heap_usage(Some(150));
+
+        let r = table.push(Tracked(100)).unwrap();
+
+        let mut guard = table.borrow_mut(&r).unwrap();
+        guard.0 = 200;
+        let err = guard.finish().unwrap_err();
+        assert!(matches!(err, ResourceTableError::HostMemoryLimitExceeded));
+
+        // Counter is updated to reflect reality even on error.
+        assert_eq!(table.current_host_heap_usage(), 200);
+    }
+
+    #[test]
+    fn test_borrow_mut_drop_without_finish_still_updates() {
+        let mut table = ResourceTable::new();
+        let r = table.push(Tracked(100)).unwrap();
+
+        {
+            let mut guard = table.borrow_mut(&r).unwrap();
+            guard.0 = 300;
+            // drop without calling finish()
+        }
+        // Safety-net drop should have updated the counter.
+        assert_eq!(table.current_host_heap_usage(), 300);
+    }
+
+    #[test]
+    fn test_borrow_mut_no_mutation_is_noop() {
+        let mut table = ResourceTable::new();
+        let r = table.push(Tracked(100)).unwrap();
+
+        {
+            let guard = table.borrow_mut(&r).unwrap();
+            guard.finish().unwrap();
+        }
+        assert_eq!(table.current_host_heap_usage(), 100);
+    }
+
+    #[test]
+    fn test_borrow_mut_shrink() {
+        let mut table = ResourceTable::new();
+        let r = table.push(Tracked(200)).unwrap();
+
+        {
+            let mut guard = table.borrow_mut(&r).unwrap();
+            guard.0 = 50;
+            guard.finish().unwrap();
+        }
+        assert_eq!(table.current_host_heap_usage(), 50);
     }
 }
 
