@@ -8,7 +8,7 @@ use crate::sockets::util::{
 };
 use crate::sockets::{DEFAULT_TCP_BACKLOG, SocketAddressFamily, WasiSocketsCtx};
 use io_lifetimes::AsSocketlike as _;
-use wasmtime::component::{FixedHostHeapUsage, HostHeapUsage};
+use wasmtime::component::FixedHostHeapUsage;
 use io_lifetimes::views::SocketlikeView;
 use rustix::io::Errno;
 use rustix::net::sockopt;

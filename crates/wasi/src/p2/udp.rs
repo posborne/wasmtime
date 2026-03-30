@@ -1,7 +1,7 @@
 use crate::sockets::{SocketAddrCheck, SocketAddressFamily};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use wasmtime::component::{FixedHostHeapUsage, HostHeapUsage};
+use wasmtime::component::FixedHostHeapUsage;
 
 pub struct IncomingDatagramStream {
     pub(crate) inner: Arc<tokio::net::UdpSocket>,

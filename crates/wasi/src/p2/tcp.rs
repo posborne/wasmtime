@@ -3,7 +3,7 @@ use crate::p2::{
     SocketResult, StreamError,
 };
 use crate::runtime::AbortOnDropJoinHandle;
-use wasmtime::component::{FixedHostHeapUsage, HostHeapUsage};
+use wasmtime::component::HostHeapUsage;
 use crate::sockets::TcpSocket;
 use io_lifetimes::AsSocketlike;
 use rustix::io::Errno;

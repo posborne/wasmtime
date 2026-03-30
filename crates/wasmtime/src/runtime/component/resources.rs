@@ -136,9 +136,12 @@ impl HostHeapUsage for anyhow::Error {
 
 impl<T: HostHeapUsage> HostHeapUsage for Option<T> {
     fn host_heap_usage(&self) -> usize {
+        // size_of_val(self) already includes the inline footprint of T within
+        // the Option layout, so we only add the *heap* portion of the inner
+        // value's usage (i.e. total minus its inline size).
         core::mem::size_of_val(self)
             + match self {
-                Some(t) => t.host_heap_usage(),
+                Some(t) => t.host_heap_usage().saturating_sub(core::mem::size_of::<T>()),
                 None => 0,
             }
     }
@@ -146,10 +149,12 @@ impl<T: HostHeapUsage> HostHeapUsage for Option<T> {
 
 impl<T: HostHeapUsage, E: HostHeapUsage> HostHeapUsage for Result<T, E> {
     fn host_heap_usage(&self) -> usize {
+        // Same reasoning as Option<T>: size_of_val(self) already covers the
+        // inline footprint of either variant.
         core::mem::size_of_val(self)
             + match self {
-                Ok(t) => t.host_heap_usage(),
-                Err(e) => e.host_heap_usage(),
+                Ok(t) => t.host_heap_usage().saturating_sub(core::mem::size_of::<T>()),
+                Err(e) => e.host_heap_usage().saturating_sub(core::mem::size_of::<E>()),
             }
     }
 }
@@ -160,8 +165,16 @@ impl HostHeapUsage for String {
     }
 }
 
-impl<T> HostHeapUsage for Vec<T> {
+impl<T: HostHeapUsage> HostHeapUsage for Vec<T> {
     fn host_heap_usage(&self) -> usize {
-        core::mem::size_of_val(self) + self.capacity() * core::mem::size_of::<T>()
+        // The Vec's inline struct (pointer, length, capacity) plus the heap
+        // buffer (capacity * element size) plus any heap owned by each live
+        // element beyond its inline footprint.
+        core::mem::size_of_val(self)
+            + self.capacity() * core::mem::size_of::<T>()
+            + self
+                .iter()
+                .map(|t| t.host_heap_usage().saturating_sub(core::mem::size_of::<T>()))
+                .sum::<usize>()
     }
 }

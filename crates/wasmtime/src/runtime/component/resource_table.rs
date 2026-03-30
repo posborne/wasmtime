@@ -432,7 +432,7 @@ impl ResourceTable {
     ///
     /// For types whose heap footprint can vary with mutation (types that only
     /// implement [`HostHeapUsage`] but not [`FixedHostHeapUsage`]), use
-    /// [`get_mut_tracked`](ResourceTable::get_mut_tracked) instead.
+    /// [`update_resource`](ResourceTable::update_resource) instead.
     pub fn get_mut<T: Any + Sized + FixedHostHeapUsage>(
         &mut self,
         key: &Resource<T>,
@@ -448,7 +448,7 @@ impl ResourceTable {
     ///
     /// This method bypasses heap usage tracking entirely. Prefer
     /// [`get_mut`](ResourceTable::get_mut) for [`FixedHostHeapUsage`] types or
-    /// [`get_mut_tracked`](ResourceTable::get_mut_tracked) for variable-size
+    /// [`update_resource`](ResourceTable::update_resource) for variable-size
     /// types.
     ///
     /// Only use this when working with type-erased entries where the concrete
@@ -653,7 +653,7 @@ mod tests {
     // ---- heap-tracking tests ----
 
     /// Variable-size resource: `host_heap_usage` returns a runtime value that
-    /// can change through mutation. Uses `get_mut_tracked` for mutation.
+    /// can change through mutation. Uses `update_resource` for mutation.
     struct Tracked(usize);
     impl HostHeapUsage for Tracked {
         fn host_heap_usage(&self) -> usize {
@@ -733,10 +733,10 @@ mod tests {
         assert_eq!(table.current_host_heap_usage(), 0);
     }
 
-    // ---- get_mut_tracked: variable-size types ----
+    // ---- update_resource: variable-size types ----
 
     #[test]
-    fn test_get_mut_tracked_grow() {
+    fn test_update_resource_grow() {
         let mut table = ResourceTable::new();
         table.set_max_host_heap_usage(Some(300));
 
@@ -753,7 +753,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_mut_tracked_exceeds_limit() {
+    fn test_update_resource_exceeds_limit() {
         let mut table = ResourceTable::new();
         table.set_max_host_heap_usage(Some(150));
 
@@ -768,7 +768,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_mut_tracked_delete_after_growth() {
+    fn test_update_resource_delete_after_growth() {
         // After an update_resource growth, delete should correctly subtract the
         // new cached size, returning the counter to zero.
         let mut table = ResourceTable::new();

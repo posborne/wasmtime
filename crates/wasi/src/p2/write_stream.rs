@@ -4,7 +4,7 @@ use std::pin::pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 use wasmtime::format_err;
-use wasmtime::component::{FixedHostHeapUsage, HostHeapUsage};
+use wasmtime::component::HostHeapUsage;
 
 #[derive(Debug)]
 struct WorkerState {
