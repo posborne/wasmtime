@@ -139,7 +139,7 @@ impl HostHeapUsage for crate::Error {
 /// TODO: if anyhow ever exposes a way to query the inner allocation size,
 /// use it here.
 #[cfg(feature = "anyhow")]
-impl HostHeapUsage for ::anyhow::Error {
+impl HostHeapUsage for crate::anyhow::Error {
     fn host_heap_usage(&self) -> usize {
         core::mem::size_of_val(self)
     }

@@ -572,12 +572,21 @@ impl ResourceTable {
     /// [`FixedHostHeapUsage`] — i.e. types whose heap footprint can change
     /// through mutation (those with owned `Vec`, `String`, `HashMap`, etc.).
     ///
-    /// The `updater` closure receives a `&mut T` and may modify it freely.
-    /// After it returns, the resource's new heap usage is computed via
-    /// [`HostHeapUsage::host_heap_usage`] and the table's running total is
-    /// adjusted. If the new usage would exceed the configured maximum, the
-    /// mutation is still applied (not rolled back), but `Err` is returned so
-    /// the caller can react.
+    /// The `updater` closure receives a `&mut T`, may modify it freely, and
+    /// may return any value `R`.  After the closure returns, the resource's new
+    /// heap usage is computed via [`HostHeapUsage::host_heap_usage`] and the
+    /// table's running total is adjusted.  The closure's return value is
+    /// propagated as the `Ok` half of the result, making it easy to extract a
+    /// value from the resource in a single step:
+    ///
+    /// ```ignore
+    /// let taken = table.update_resource(&id, |r| r.field.take())?;
+    /// // `taken` is the value that was in `r.field`; the table is already updated.
+    /// ```
+    ///
+    /// If the new usage would exceed the configured maximum, the mutation is
+    /// still applied (not rolled back), but `Err` is returned so the caller
+    /// can react.
     ///
     /// For types whose size can never change through mutation, use the simpler
     /// [`get_mut`](ResourceTable::get_mut) instead.
@@ -588,14 +597,14 @@ impl ResourceTable {
     /// table, [`ResourceTableError::WrongType`] if the type does not match, and
     /// [`ResourceTableError::HostMemoryLimitExceeded`] if the post-mutation
     /// usage exceeds the configured limit (if any).
-    pub fn update_resource<T, F>(
+    pub fn update_resource<T, F, R>(
         &mut self,
         resource: &Resource<T>,
         updater: F,
-    ) -> Result<(), ResourceTableError>
+    ) -> Result<R, ResourceTableError>
     where
         T: Any + Sized + HostHeapUsage,
-        F: FnOnce(&mut T),
+        F: FnOnce(&mut T) -> R,
     {
         let key = resource.rep();
         let entry = self.occupied_mut(key)?;
@@ -604,10 +613,11 @@ impl ResourceTable {
             .downcast_mut::<T>()
             .ok_or(ResourceTableError::WrongType)?;
         let old_usage = t.host_heap_usage();
-        updater(t);
+        let result = updater(t);
         let new_usage = t.host_heap_usage();
 
-        self.update_usage(old_usage, new_usage)
+        self.update_usage(old_usage, new_usage)?;
+        Ok(result)
     }
 
     /// Remove the specified entry from the table.
