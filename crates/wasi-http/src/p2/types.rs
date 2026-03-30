@@ -311,9 +311,7 @@ impl HostHeapUsage for HostIncomingRequest {
         // lower bound since http::Uri doesn't expose its capacity.
         // headers is Arc-backed (FieldMap) and not solely owned — not tracked.
         // body is a child resource tracked separately when pushed.
-        core::mem::size_of_val(self)
-            + self.authority.capacity()
-            + self.uri.to_string().len()
+        core::mem::size_of_val(self) + self.authority.capacity() + self.uri.to_string().len()
     }
 }
 

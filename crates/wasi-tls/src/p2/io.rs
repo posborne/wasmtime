@@ -7,9 +7,9 @@ use std::sync::Arc;
 use std::task::{Poll, ready};
 use std::{future::Future, mem, pin::Pin};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
-use wasmtime::component::HostHeapUsage;
 use tokio::sync::Mutex;
 use wasmtime::Result;
+use wasmtime::component::HostHeapUsage;
 use wasmtime_wasi::async_trait;
 use wasmtime_wasi::p2::{
     DynInputStream, DynOutputStream, OutputStream, Pollable, StreamError, StreamResult,

@@ -152,7 +152,9 @@ impl<T: HostHeapUsage> HostHeapUsage for Option<T> {
         // value's usage (i.e. total minus its inline size).
         core::mem::size_of_val(self)
             + match self {
-                Some(t) => t.host_heap_usage().saturating_sub(core::mem::size_of::<T>()),
+                Some(t) => t
+                    .host_heap_usage()
+                    .saturating_sub(core::mem::size_of::<T>()),
                 None => 0,
             }
     }
@@ -164,8 +166,12 @@ impl<T: HostHeapUsage, E: HostHeapUsage> HostHeapUsage for Result<T, E> {
         // inline footprint of either variant.
         core::mem::size_of_val(self)
             + match self {
-                Ok(t) => t.host_heap_usage().saturating_sub(core::mem::size_of::<T>()),
-                Err(e) => e.host_heap_usage().saturating_sub(core::mem::size_of::<E>()),
+                Ok(t) => t
+                    .host_heap_usage()
+                    .saturating_sub(core::mem::size_of::<T>()),
+                Err(e) => e
+                    .host_heap_usage()
+                    .saturating_sub(core::mem::size_of::<E>()),
             }
     }
 }
@@ -185,7 +191,10 @@ impl<T: HostHeapUsage> HostHeapUsage for Vec<T> {
             + self.capacity() * core::mem::size_of::<T>()
             + self
                 .iter()
-                .map(|t| t.host_heap_usage().saturating_sub(core::mem::size_of::<T>()))
+                .map(|t| {
+                    t.host_heap_usage()
+                        .saturating_sub(core::mem::size_of::<T>())
+                })
                 .sum::<usize>()
     }
 }

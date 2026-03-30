@@ -11,8 +11,8 @@ use std::mem;
 use std::task::{Context, Poll};
 use std::{pin::Pin, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
-use wasmtime::format_err;
 use wasmtime::component::{FixedHostHeapUsage, HostHeapUsage};
+use wasmtime::format_err;
 use wasmtime_wasi::p2::{InputStream, OutputStream, Pollable, StreamError};
 use wasmtime_wasi::runtime::{AbortOnDropJoinHandle, poll_noop};
 

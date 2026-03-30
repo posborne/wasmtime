@@ -43,32 +43,31 @@ impl HostResolveAddressStream for WasiSocketsCtxView<'_> {
         &mut self,
         resource: Resource<ResolveAddressStream>,
     ) -> Result<Option<IpAddress>, SocketError> {
-        let mut result: Result<Option<IpAddress>, SocketError> =
-            Err(ErrorCode::WouldBlock.into());
+        let mut result: Result<Option<IpAddress>, SocketError> = Err(ErrorCode::WouldBlock.into());
         self.table
-            .update_resource(&resource, |stream| loop {
-                match stream {
-                    ResolveAddressStream::Waiting(future) => {
-                        match crate::runtime::poll_noop(Pin::new(future)) {
-                            Some(r) => {
-                                *stream =
-                                    ResolveAddressStream::Done(r.map(|v| v.into_iter()));
-                            }
-                            None => {
-                                result = Err(ErrorCode::WouldBlock.into());
-                                return;
+            .update_resource(&resource, |stream| {
+                loop {
+                    match stream {
+                        ResolveAddressStream::Waiting(future) => {
+                            match crate::runtime::poll_noop(Pin::new(future)) {
+                                Some(r) => {
+                                    *stream = ResolveAddressStream::Done(r.map(|v| v.into_iter()));
+                                }
+                                None => {
+                                    result = Err(ErrorCode::WouldBlock.into());
+                                    return;
+                                }
                             }
                         }
-                    }
-                    ResolveAddressStream::Done(slot @ Err(_)) => {
-                        let err = mem::replace(slot, Ok(Vec::new().into_iter()))
-                            .unwrap_err();
-                        result = Err(err.into());
-                        return;
-                    }
-                    ResolveAddressStream::Done(Ok(iter)) => {
-                        result = Ok(iter.next());
-                        return;
+                        ResolveAddressStream::Done(slot @ Err(_)) => {
+                            let err = mem::replace(slot, Ok(Vec::new().into_iter())).unwrap_err();
+                            result = Err(err.into());
+                            return;
+                        }
+                        ResolveAddressStream::Done(Ok(iter)) => {
+                            result = Ok(iter.next());
+                            return;
+                        }
                     }
                 }
             })

@@ -1,5 +1,5 @@
-use super::resources::{FixedHostHeapUsage, HostHeapUsage};
 use super::Resource;
+use super::resources::{FixedHostHeapUsage, HostHeapUsage};
 use crate::prelude::*;
 use alloc::collections::{BTreeMap, BTreeSet};
 use core::any::Any;

@@ -8,7 +8,6 @@ use crate::sockets::util::{
 };
 use crate::sockets::{DEFAULT_TCP_BACKLOG, SocketAddressFamily, WasiSocketsCtx};
 use io_lifetimes::AsSocketlike as _;
-use wasmtime::component::HostHeapUsage;
 use io_lifetimes::views::SocketlikeView;
 use rustix::io::Errno;
 use rustix::net::sockopt;
@@ -20,6 +19,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 use std::time::Duration;
+use wasmtime::component::HostHeapUsage;
 
 /// The state of a TCP socket.
 ///

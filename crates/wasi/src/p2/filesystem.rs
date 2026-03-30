@@ -6,8 +6,8 @@ use crate::runtime::AbortOnDropJoinHandle;
 use bytes::{Bytes, BytesMut};
 use std::io;
 use std::mem;
-use wasmtime::format_err;
 use wasmtime::component::HostHeapUsage;
+use wasmtime::format_err;
 
 pub type FsResult<T> = Result<T, FsError>;
 

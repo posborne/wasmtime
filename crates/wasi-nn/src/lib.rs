@@ -9,8 +9,8 @@ use core::fmt;
 pub use registry::{GraphRegistry, InMemoryRegistry};
 use std::path::Path;
 use std::sync::Arc;
-use wasmtime::format_err;
 use wasmtime::component::HostHeapUsage;
+use wasmtime::format_err;
 
 /// Construct an in-memory registry from the available backends and a list of
 /// `(<backend name>, <graph directory>)`. This assumes graphs can be loaded

@@ -464,14 +464,12 @@ impl types::HostFutureTrailers for WasiHttpCtxView<'_> {
         id: Resource<HostFutureTrailers>,
     ) -> wasmtime::Result<Option<Result<Result<Option<Resource<Trailers>>, types::ErrorCode>, ()>>>
     {
-        let res = self.table.update_resource(&id, |trailers| {
-            match trailers {
-                HostFutureTrailers::Waiting { .. } | HostFutureTrailers::Consumed => None,
-                HostFutureTrailers::Done(_) => {
-                    match std::mem::replace(trailers, HostFutureTrailers::Consumed) {
-                        HostFutureTrailers::Done(res) => Some(res),
-                        _ => unreachable!(),
-                    }
+        let res = self.table.update_resource(&id, |trailers| match trailers {
+            HostFutureTrailers::Waiting { .. } | HostFutureTrailers::Consumed => None,
+            HostFutureTrailers::Done(_) => {
+                match std::mem::replace(trailers, HostFutureTrailers::Consumed) {
+                    HostFutureTrailers::Done(res) => Some(res),
+                    _ => unreachable!(),
                 }
             }
         })?;
@@ -498,9 +496,7 @@ impl types::HostIncomingBody for WasiHttpCtxView<'_> {
         &mut self,
         id: Resource<HostIncomingBody>,
     ) -> wasmtime::Result<Result<Resource<DynInputStream>, ()>> {
-        let stream = self
-            .table
-            .update_resource(&id, |body| body.take_stream())?;
+        let stream = self.table.update_resource(&id, |body| body.take_stream())?;
         match stream {
             Some(stream) => {
                 let stream: DynInputStream = Box::new(stream);
@@ -615,15 +611,10 @@ impl types::HostFutureIncomingResponse for WasiHttpCtxView<'_> {
         Option<Result<Result<Resource<HostIncomingResponse>, types::ErrorCode>, ()>>,
     > {
         // Atomically transition to Consumed and extract the inner result.
-        let ready = self.table.update_resource(&id, |resp| {
-            match resp {
-                HostFutureIncomingResponse::Pending(_) | HostFutureIncomingResponse::Consumed => {
-                    None
-                }
-                HostFutureIncomingResponse::Ready(_) => Some(
-                    std::mem::replace(resp, HostFutureIncomingResponse::Consumed)
-                        .unwrap_ready(),
-                ),
+        let ready = self.table.update_resource(&id, |resp| match resp {
+            HostFutureIncomingResponse::Pending(_) | HostFutureIncomingResponse::Consumed => None,
+            HostFutureIncomingResponse::Ready(_) => {
+                Some(std::mem::replace(resp, HostFutureIncomingResponse::Consumed).unwrap_ready())
             }
         })?;
 

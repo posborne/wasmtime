@@ -3,8 +3,8 @@ use bytes::Bytes;
 use std::pin::pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
-use wasmtime::format_err;
 use wasmtime::component::HostHeapUsage;
+use wasmtime::format_err;
 
 #[derive(Debug)]
 struct WorkerState {

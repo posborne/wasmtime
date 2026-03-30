@@ -13,8 +13,8 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use tokio::io::{self, AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
-use wasmtime::format_err;
 use wasmtime::component::{FixedHostHeapUsage, HostHeapUsage};
+use wasmtime::format_err;
 use wasmtime_wasi_io::{
     poll::Pollable,
     streams::{InputStream, OutputStream, StreamError},

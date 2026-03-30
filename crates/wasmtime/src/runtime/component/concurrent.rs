@@ -4880,8 +4880,7 @@ impl HostHeapUsage for WaitableSet {
         core::mem::size_of_val(self)
             + self.ready.len() * core::mem::size_of::<Waitable>()
             + self.waiting.len()
-                * (core::mem::size_of::<TableId<GuestTask>>()
-                    + core::mem::size_of::<WaitMode>())
+                * (core::mem::size_of::<TableId<GuestTask>>() + core::mem::size_of::<WaitMode>())
     }
 }
 
@@ -5108,10 +5107,7 @@ impl ConcurrentState {
         self.table.get_mut().push(value).map(TableId::from)
     }
 
-    fn get_mut<V: 'static>(
-        &mut self,
-        id: TableId<V>,
-    ) -> Result<&mut V, ResourceTableError> {
+    fn get_mut<V: 'static>(&mut self, id: TableId<V>) -> Result<&mut V, ResourceTableError> {
         self.table
             .get_mut()
             .get_any_mut(Resource::<V>::from(id).rep())?

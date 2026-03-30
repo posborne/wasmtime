@@ -8,11 +8,11 @@ use crate::sockets::{SocketAddrCheck, SocketAddressFamily, WasiSocketsCtx};
 use cap_net_ext::AddressFamily;
 use io_lifetimes::AsSocketlike as _;
 use io_lifetimes::raw::{FromRawSocketlike as _, IntoRawSocketlike as _};
-use wasmtime::component::FixedHostHeapUsage;
 use rustix::io::Errno;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tracing::debug;
+use wasmtime::component::FixedHostHeapUsage;
 
 /// The state of a UDP socket.
 ///

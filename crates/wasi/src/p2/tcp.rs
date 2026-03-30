@@ -3,7 +3,6 @@ use crate::p2::{
     SocketResult, StreamError,
 };
 use crate::runtime::AbortOnDropJoinHandle;
-use wasmtime::component::HostHeapUsage;
 use crate::sockets::TcpSocket;
 use io_lifetimes::AsSocketlike;
 use rustix::io::Errno;
@@ -13,6 +12,7 @@ use std::net::Shutdown;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use wasmtime::Result;
+use wasmtime::component::HostHeapUsage;
 
 impl TcpSocket {
     pub(crate) fn p2_streams(&mut self) -> SocketResult<(DynInputStream, DynOutputStream)> {
