@@ -89,3 +89,6 @@ where
 
 pub struct TerminalInput;
 pub struct TerminalOutput;
+
+impl wasmtime::component::FixedHostHeapUsage for TerminalInput {}
+impl wasmtime::component::FixedHostHeapUsage for TerminalOutput {}

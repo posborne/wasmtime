@@ -6,8 +6,8 @@ use crate::component::matching::InstanceType;
 use crate::component::types;
 use crate::component::values::ErrorContextAny;
 use crate::component::{
-    AsAccessor, ComponentInstanceId, ComponentType, FutureAny, Instance, Lift, Lower, StreamAny,
-    Val, WasmList,
+    AsAccessor, ComponentInstanceId, ComponentType, FixedHostHeapUsage, FutureAny, HostHeapUsage,
+    Instance, Lift, Lower, StreamAny, Val, WasmList,
 };
 use crate::store::{StoreOpaque, StoreToken};
 use crate::vm::component::{ComponentInstance, HandleTable, TransmitLocalState};
@@ -235,6 +235,13 @@ fn lift<T: func::Lift + Send + 'static, B: ReadBuffer<T>>(
 pub(super) struct ErrorContextState {
     /// Debug message associated with the error context
     pub(crate) debug_msg: String,
+}
+
+impl HostHeapUsage for ErrorContextState {
+    fn host_heap_usage(&self) -> usize {
+        core::mem::size_of_val(self)
+            + self.debug_msg.host_heap_usage().saturating_sub(core::mem::size_of::<String>())
+    }
 }
 
 /// Represents the size and alignment for a "flat" Component Model type,
@@ -2092,6 +2099,8 @@ impl TableDebug for TransmitHandle {
     }
 }
 
+impl FixedHostHeapUsage for TransmitHandle {}
+
 /// Represents the state of a stream or future.
 struct TransmitState {
     /// The write end of the stream or future.
@@ -2135,6 +2144,7 @@ impl TableDebug for TransmitState {
     }
 }
 
+impl FixedHostHeapUsage for TransmitState {}
 impl TransmitOrigin {
     fn guest(id: ComponentInstanceId, index: TransmitIndex) -> Self {
         match index {

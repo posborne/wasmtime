@@ -7,6 +7,7 @@ use http::StatusCode;
 use http_body_util::BodyExt as _;
 use http_body_util::combinators::UnsyncBoxBody;
 use wasmtime::AsContextMut;
+use wasmtime::component::HostHeapUsage;
 use wasmtime::error::Context as _;
 
 /// The concrete type behind a `wasi:http/types.response` resource.
@@ -17,6 +18,14 @@ pub struct Response {
     pub headers: FieldMap,
     /// Response body.
     pub(crate) body: Body,
+}
+
+impl HostHeapUsage for Response {
+    fn host_heap_usage(&self) -> usize {
+        // headers is FieldMap (Arc-backed, shared); body is opaque.
+        // Report inline size only.
+        core::mem::size_of_val(self)
+    }
 }
 
 impl TryFrom<Response> for http::Response<Body> {

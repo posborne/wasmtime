@@ -21,7 +21,7 @@ use std::{
 };
 use tokio::io::{self, AsyncWrite};
 use tokio::sync::Notify;
-use wasmtime::component::{Component, Linker};
+use wasmtime::component::{Component, FixedHostHeapUsage, Linker};
 use wasmtime::{
     Engine, Result, Store, StoreContextMut, StoreLimits, UpdateDeadline, bail, error::Context as _,
 };
@@ -1304,6 +1304,9 @@ struct LogStream {
     output: Output,
     state: Arc<LogStreamState>,
 }
+
+// LogStream wraps an Arc (fixed-size pointer) and an Output (unit enum).
+impl FixedHostHeapUsage for LogStream {}
 
 struct LogStreamState {
     prefix: String,

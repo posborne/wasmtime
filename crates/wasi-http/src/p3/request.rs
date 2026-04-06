@@ -13,6 +13,7 @@ use std::sync::Arc;
 use tokio::sync::oneshot;
 use tracing::debug;
 use wasmtime::AsContextMut;
+use wasmtime::component::HostHeapUsage;
 
 /// The concrete type behind a `wasi:http/types.request-options` resource.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
@@ -41,6 +42,14 @@ pub struct Request {
     pub options: Option<Arc<RequestOptions>>,
     /// Request body.
     pub(crate) body: Body,
+}
+
+impl HostHeapUsage for Request {
+    fn host_heap_usage(&self) -> usize {
+        // headers is FieldMap (Arc-backed, shared); body is opaque.
+        // Report inline size only.
+        core::mem::size_of_val(self)
+    }
 }
 
 impl Request {

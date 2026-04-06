@@ -37,7 +37,8 @@
     // Platform-specific code has a lot of false positives with these lints so
     // like Unix disable the lints for this module.
     clippy::cast_sign_loss,
-    clippy::cast_possible_truncation
+    clippy::cast_possible_truncation,
+    reason = "FFI/platform-specific code: naming and cast lints don't apply here"
 )]
 
 use crate::runtime::module::lookup_code;
@@ -172,7 +173,7 @@ unsafe extern "C" fn sigbus_handler(
 // additionally match what mach expects (apparently, I wish I had a better
 // reference for this).
 #[repr(C, packed(4))]
-#[allow(dead_code)]
+#[allow(dead_code, reason = "FFI struct fields must match the C layout even if not all are read")]
 #[derive(Copy, Clone, Debug)]
 struct __Request__exception_raise_t {
     Head: mach_msg_header_t,
@@ -194,7 +195,7 @@ struct __Request__exception_raise_t {
 
 // This is largely just copied from SpiderMonkey.
 #[repr(C)]
-#[allow(dead_code)]
+#[allow(dead_code, reason = "FFI struct fields must match the C layout even if not all are read")]
 #[derive(Debug)]
 struct ExceptionRequest {
     body: __Request__exception_raise_t,

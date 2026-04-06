@@ -30,7 +30,7 @@ use http::HeaderName;
 use http::uri::Scheme;
 use http_body_util::combinators::UnsyncBoxBody;
 use std::sync::Arc;
-use wasmtime::component::{HasData, Linker, ResourceTable};
+use wasmtime::component::{FixedHostHeapUsage, HasData, Linker, ResourceTable};
 use wasmtime_wasi::TrappableError;
 
 pub(crate) type HttpResult<T> = Result<T, HttpError>;
@@ -282,6 +282,10 @@ impl<T> Deref for MaybeMutable<T> {
         }
     }
 }
+
+// MaybeMutable wraps Arc<T>; the Arc pointer is fixed-size inline regardless
+// of what T is or how MaybeMutable transitions between Mutable/Immutable.
+impl<T: 'static> FixedHostHeapUsage for MaybeMutable<T> {}
 
 impl<T> MaybeMutable<T> {
     /// Construct a mutable [`MaybeMutable`].

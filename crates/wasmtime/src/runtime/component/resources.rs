@@ -5,6 +5,8 @@ mod host_static;
 mod host_tables;
 mod ty;
 
+use std::collections::HashMap;
+
 pub use any::*;
 pub use host_dynamic::*;
 pub use host_static::*;
@@ -198,3 +200,46 @@ impl<T: HostHeapUsage> HostHeapUsage for Vec<T> {
                 .sum::<usize>()
     }
 }
+
+impl<K, V> HostHeapUsage for HashMap<K, V>
+where
+    K: HostHeapUsage,
+    V: HostHeapUsage,
+{
+    fn host_heap_usage(&self) -> usize {
+        // The size of the HashMap struct itself (stack/parent container)
+        let mut total = core::mem::size_of_val(self);
+
+        // HashMap allocates space for (Keys, Values, and Metadata) based on capacity.
+        //
+        // This assumes hashbrown and could be incorrect depending on std implemetnation
+        // changes (but that is somewhat OK for the invariants of HostHeapUsage).
+        let capacity = self.capacity();
+        if capacity > 0 {
+            total += capacity * (core::mem::size_of::<K>() + core::mem::size_of::<V>() + 1);
+        }
+
+        // The dynamic heap usage of the elements themselves
+        for (key, value) in self.iter() {
+            // don't double-count the size of the container included in the capacity calculation
+            total += key
+                .host_heap_usage()
+                .saturating_sub(core::mem::size_of::<K>());
+            total += value
+                .host_heap_usage()
+                .saturating_sub(core::mem::size_of::<V>());
+        }
+
+        total
+    }
+}
+
+// wasmtime core types stored in ResourceTable are handles backed by a store-
+// internal index; their heap is owned by the store, not the handle itself.
+impl FixedHostHeapUsage for crate::Func {}
+impl FixedHostHeapUsage for crate::Global {}
+impl FixedHostHeapUsage for crate::Memory {}
+impl FixedHostHeapUsage for crate::Table {}
+impl FixedHostHeapUsage for crate::Tag {}
+impl FixedHostHeapUsage for crate::Instance {}
+impl FixedHostHeapUsage for crate::Module {}

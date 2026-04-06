@@ -105,7 +105,7 @@ impl crate::p2::host::tcp::tcp::HostTcpSocket for WasiSocketsCtxView<'_> {
         Resource<DynInputStream>,
         Resource<DynOutputStream>,
     )> {
-        let (mut tcp_socket, input, output) = {
+        let (tcp_socket, input, output) = {
             let mut socket = self.table.borrow_mut(&this)?;
             let mut tcp_socket = socket.accept()?.ok_or(ErrorCode::WouldBlock)?;
             let streams = tcp_socket.p2_streams()?;

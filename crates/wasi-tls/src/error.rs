@@ -1,7 +1,12 @@
 use std::sync::Arc;
+use wasmtime::component::FixedHostHeapUsage;
 
 /// TLS error
 pub struct Error(Arc<String>);
+
+// Error wraps an Arc<String>; the Arc pointer is fixed-size inline, and the
+// String content is shared (not solely owned), so heap footprint is constant.
+impl FixedHostHeapUsage for Error {}
 
 impl Error {
     /// Creates a new error with the given message.

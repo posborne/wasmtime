@@ -61,29 +61,11 @@ fn get_request<'a>(
     table.get(req).context("failed to get request from table")
 }
 
-fn get_request_mut<'a>(
-    table: &'a mut ResourceTable,
-    req: &Resource<Request>,
-) -> wasmtime::Result<&'a mut Request> {
-    table
-        .get_mut(req)
-        .context("failed to get request from table")
-}
-
 fn get_response<'a>(
     table: &'a ResourceTable,
     res: &Resource<Response>,
 ) -> wasmtime::Result<&'a Response> {
     table.get(res).context("failed to get response from table")
-}
-
-fn get_response_mut<'a>(
-    table: &'a mut ResourceTable,
-    res: &Resource<Response>,
-) -> wasmtime::Result<&'a mut Response> {
-    table
-        .get_mut(res)
-        .context("failed to get response from table")
 }
 
 fn get_request_options<'a>(
@@ -393,11 +375,11 @@ impl HostRequest for WasiHttpCtxView<'_> {
         req: Resource<Request>,
         method: Method,
     ) -> wasmtime::Result<Result<(), ()>> {
-        let req = get_request_mut(self.table, &req)?;
         let Ok(method) = method.try_into() else {
             return Ok(Err(()));
         };
-        req.method = method;
+        self.table
+            .update_resource(&req, |req| req.method = method)?;
         Ok(Ok(()))
     }
 
@@ -413,15 +395,15 @@ impl HostRequest for WasiHttpCtxView<'_> {
         req: Resource<Request>,
         path_with_query: Option<String>,
     ) -> wasmtime::Result<Result<(), ()>> {
-        let req = get_request_mut(self.table, &req)?;
-        let Some(path_with_query) = path_with_query else {
-            req.path_with_query = None;
-            return Ok(Ok(()));
+        let parsed = match path_with_query {
+            None => None,
+            Some(pq) => match pq.try_into() {
+                Ok(pq) => Some(pq),
+                Err(_) => return Ok(Err(())),
+            },
         };
-        let Ok(path_with_query) = path_with_query.try_into() else {
-            return Ok(Err(()));
-        };
-        req.path_with_query = Some(path_with_query);
+        self.table
+            .update_resource(&req, |req| req.path_with_query = parsed)?;
         Ok(Ok(()))
     }
 
@@ -435,15 +417,15 @@ impl HostRequest for WasiHttpCtxView<'_> {
         req: Resource<Request>,
         scheme: Option<Scheme>,
     ) -> wasmtime::Result<Result<(), ()>> {
-        let req = get_request_mut(self.table, &req)?;
-        let Some(scheme) = scheme else {
-            req.scheme = None;
-            return Ok(Ok(()));
+        let parsed = match scheme {
+            None => None,
+            Some(s) => match s.try_into() {
+                Ok(s) => Some(s),
+                Err(_) => return Ok(Err(())),
+            },
         };
-        let Ok(scheme) = scheme.try_into() else {
-            return Ok(Err(()));
-        };
-        req.scheme = Some(scheme);
+        self.table
+            .update_resource(&req, |req| req.scheme = parsed)?;
         Ok(Ok(()))
     }
 
@@ -457,19 +439,21 @@ impl HostRequest for WasiHttpCtxView<'_> {
         req: Resource<Request>,
         authority: Option<String>,
     ) -> wasmtime::Result<Result<(), ()>> {
-        let req = get_request_mut(self.table, &req)?;
-        let Some(authority) = authority else {
-            req.authority = None;
-            return Ok(Ok(()));
+        let parsed = match authority {
+            None => None,
+            Some(authority) => {
+                let has_port = authority.contains(':');
+                let Ok(authority) = http::uri::Authority::try_from(authority) else {
+                    return Ok(Err(()));
+                };
+                if has_port && authority.port_u16().is_none() {
+                    return Ok(Err(()));
+                }
+                Some(authority)
+            }
         };
-        let has_port = authority.contains(':');
-        let Ok(authority) = http::uri::Authority::try_from(authority) else {
-            return Ok(Err(()));
-        };
-        if has_port && authority.port_u16().is_none() {
-            return Ok(Err(()));
-        }
-        req.authority = Some(authority);
+        self.table
+            .update_resource(&req, |req| req.authority = parsed)?;
         Ok(Ok(()))
     }
 
@@ -670,10 +654,10 @@ impl HostResponse for WasiHttpCtxView<'_> {
         res: Resource<Response>,
         status_code: StatusCode,
     ) -> wasmtime::Result<Result<(), ()>> {
-        let res = get_response_mut(self.table, &res)?;
         match http::StatusCode::from_u16(status_code) {
             Ok(status) if matches!(status_code, 100..=599) => {
-                res.status = status;
+                self.table
+                    .update_resource(&res, |res| res.status = status)?;
                 Ok(Ok(()))
             }
             _ => Ok(Err(())),

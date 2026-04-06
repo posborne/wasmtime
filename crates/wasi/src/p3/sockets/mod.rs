@@ -9,6 +9,12 @@ mod host;
 pub type SocketResult<T> = Result<T, SocketError>;
 pub type SocketError = TrappableError<types::ErrorCode>;
 
+impl From<wasmtime::component::ResourceTableError> for SocketError {
+    fn from(error: wasmtime::component::ResourceTableError) -> Self {
+        Self::trap(error)
+    }
+}
+
 /// Add all WASI interfaces from this module into the `linker` provided.
 ///
 /// This function will add all interfaces implemented by this module to the

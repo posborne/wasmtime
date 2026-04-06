@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use wasmtime::{
     Engine, ExnRef, FrameHandle, Func, Global, Instance, Memory, Module, OwnedRooted, Result,
-    Table, Tag, Val, component::Resource, component::ResourceTable,
+    Table, Tag, Val, component::FixedHostHeapUsage, component::Resource, component::ResourceTable,
 };
 use wasmtime_wasi::p2::{DynPollable, Pollable, subscribe};
 
@@ -30,6 +30,10 @@ pub struct Debuggee {
     /// handler treats the next epoch yield as an `Interrupted` event.
     pub(crate) interrupt_pending: Arc<AtomicBool>,
 }
+
+// Debuggee contains a Box<dyn OpaqueDebugger> whose inner heap is opaque;
+// we report only the inline struct size, which is fixed regardless of mutation.
+impl FixedHostHeapUsage for Debuggee {}
 
 impl Debuggee {
     /// Finish execution of the debuggee before returning.
@@ -103,6 +107,10 @@ enum EventFutureState {
     },
 }
 
+// EventFuture contains a Pin<Box<dyn Future>> whose inner heap is opaque;
+// we report only the inline struct size.
+impl FixedHostHeapUsage for EventFuture {}
+
 impl EventFuture {
     fn new_single_step(
         mut inner: Box<dyn OpaqueDebugger + Send + 'static>,
@@ -155,9 +163,13 @@ impl wasmtime_wasi_io::poll::Pollable for EventFuture {
 #[derive(Clone)]
 pub struct Frame(FrameHandle);
 
+impl FixedHostHeapUsage for Frame {}
+
 /// Representation of a Wasm exception object.
 #[derive(Clone)]
 pub struct WasmException(OwnedRooted<ExnRef>);
+
+impl FixedHostHeapUsage for WasmException {}
 
 /// Representation of a Wasm value.
 ///
@@ -173,6 +185,8 @@ pub enum WasmValue {
     Func(Option<Func>),
     // TODO: GC structs and arrays.
 }
+
+impl FixedHostHeapUsage for WasmValue {}
 
 /// Get the `OpaqueDebugger` or raise an error.
 fn debugger<'a>(

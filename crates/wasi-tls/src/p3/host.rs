@@ -8,7 +8,8 @@ use std::task::{Context, Poll};
 use tokio::{io::AsyncWriteExt as _, sync::oneshot};
 use wasmtime::StoreContextMut;
 use wasmtime::component::{
-    Access, Accessor, AccessorTask, FutureProducer, FutureReader, HasData, Resource, StreamReader,
+    Access, Accessor, AccessorTask, FixedHostHeapUsage, FutureProducer, FutureReader, HasData,
+    Resource, StreamReader,
 };
 
 /// Host-side state stored for `wasi:tls/client` `connector` resources.
@@ -17,6 +18,10 @@ pub struct Connector {
     send: Option<pipe::Writer>,
     recv: Option<pipe::Reader>,
 }
+
+// Connector wraps Shared (Arc-like) and Option<pipe handles>; all fields are
+// fixed-size inline regardless of mutation.
+impl FixedHostHeapUsage for Connector {}
 
 impl<'a> bindings::tls::client::Host for WasiTlsCtxView<'a> {}
 impl<'a> bindings::tls::types::Host for WasiTlsCtxView<'a> {}

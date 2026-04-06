@@ -33,15 +33,7 @@ fn get_socket<'a>(
         .map_err(SocketError::trap)
 }
 
-fn get_socket_mut<'a>(
-    table: &'a mut ResourceTable,
-    socket: &'a Resource<TcpSocket>,
-) -> SocketResult<&'a mut TcpSocket> {
-    table
-        .get_mut(socket)
-        .context("failed to get socket resource from table")
-        .map_err(SocketError::trap)
-}
+
 
 struct ListenStreamProducer<T> {
     listener: Arc<TcpListener>,
@@ -253,18 +245,22 @@ impl HostTcpSocketWithStore for WasiSockets {
             return Err(ErrorCode::AccessDenied.into());
         }
         let sock = store.with(|mut store| {
-            let socket = get_socket_mut(store.get().table, &socket)?;
-            let socket = socket.start_connect(&remote_address)?;
-            SocketResult::Ok(socket)
+            store
+                .get()
+                .table
+                .update_resource(&socket, |socket| socket.start_connect(&remote_address))?
+                .map_err(SocketError::from)
         })?;
 
         // FIXME: handle possible cancellation of the outer `connect`
         // https://github.com/bytecodealliance/wasmtime/pull/11291#discussion_r2223917986
         let res = sock.connect(remote_address).await;
         store.with(|mut store| {
-            let socket = get_socket_mut(store.get().table, &socket)?;
-            socket.finish_connect(res)?;
-            Ok(())
+            store
+                .get()
+                .table
+                .update_resource(&socket, |socket| socket.finish_connect(res))?
+                .map_err(SocketError::from)
         })
     }
 
@@ -273,11 +269,16 @@ impl HostTcpSocketWithStore for WasiSockets {
         socket: Resource<TcpSocket>,
     ) -> SocketResult<StreamReader<Resource<TcpSocket>>> {
         let getter = store.getter();
-        let socket = get_socket_mut(store.get().table, &socket)?;
-        socket.listen_p3()?;
-        let listener = socket.tcp_listener_arc().unwrap().clone();
-        let family = socket.address_family();
-        let options = socket.non_inherited_options().clone();
+        let (listener, family, options) = store
+            .get()
+            .table
+            .update_resource(&socket, |socket| -> SocketResult<_> {
+                socket.listen_p3()?;
+                let listener = socket.tcp_listener_arc().unwrap().clone();
+                let family = socket.address_family();
+                let options = socket.non_inherited_options().clone();
+                Ok((listener, family, options))
+            })??;
         let ret = StreamReader::new(
             &mut store,
             ListenStreamProducer {
@@ -296,8 +297,11 @@ impl HostTcpSocketWithStore for WasiSockets {
         socket: Resource<TcpSocket>,
         mut data: StreamReader<u8>,
     ) -> wasmtime::Result<FutureReader<Result<(), ErrorCode>>> {
-        let socket = get_socket_mut(store.get().table, &socket)?;
-        match socket.take_send_stream() {
+        let send_stream = store
+            .get()
+            .table
+            .update_resource(&socket, |socket| socket.take_send_stream())?;
+        match send_stream {
             Ok(stream) => {
                 let (result_tx, result_rx) = oneshot::channel();
                 data.pipe(
@@ -320,8 +324,11 @@ impl HostTcpSocketWithStore for WasiSockets {
         mut store: Access<T, Self>,
         socket: Resource<TcpSocket>,
     ) -> wasmtime::Result<(StreamReader<u8>, FutureReader<Result<(), ErrorCode>>)> {
-        let socket = get_socket_mut(store.get().table, &socket)?;
-        match socket.take_receive_stream() {
+        let receive_stream = store
+            .get()
+            .table
+            .update_resource(&socket, |socket| socket.take_receive_stream())?;
+        match receive_stream {
             Ok(stream) => {
                 let (result_tx, result_rx) = oneshot::channel();
                 Ok((
@@ -353,10 +360,12 @@ impl HostTcpSocket for WasiSocketsCtxView<'_> {
         if !(self.ctx.socket_addr_check)(local_address, SocketAddrUse::TcpBind).await {
             return Err(ErrorCode::AccessDenied.into());
         }
-        let socket = get_socket_mut(self.table, &socket)?;
-        socket.start_bind(local_address)?;
-        socket.finish_bind()?;
-        Ok(())
+        self.table
+            .update_resource(&socket, |socket| -> SocketResult<()> {
+                socket.start_bind(local_address)?;
+                socket.finish_bind()?;
+                Ok(())
+            })?
     }
 
     fn create(&mut self, address_family: IpAddressFamily) -> SocketResult<Resource<TcpSocket>> {
@@ -398,9 +407,9 @@ impl HostTcpSocket for WasiSocketsCtxView<'_> {
         socket: Resource<TcpSocket>,
         value: u64,
     ) -> SocketResult<()> {
-        let sock = get_socket_mut(self.table, &socket)?;
-        sock.set_listen_backlog_size(value)?;
-        Ok(())
+        self.table
+            .update_resource(&socket, |sock| sock.set_listen_backlog_size(value))?
+            .map_err(SocketError::from)
     }
 
     fn get_keep_alive_enabled(&mut self, socket: Resource<TcpSocket>) -> SocketResult<bool> {
@@ -413,9 +422,9 @@ impl HostTcpSocket for WasiSocketsCtxView<'_> {
         socket: Resource<TcpSocket>,
         value: bool,
     ) -> SocketResult<()> {
-        let sock = get_socket(self.table, &socket)?;
-        sock.set_keep_alive_enabled(value)?;
-        Ok(())
+        self.table
+            .update_resource(&socket, |sock| sock.set_keep_alive_enabled(value))?
+            .map_err(SocketError::from)
     }
 
     fn get_keep_alive_idle_time(&mut self, socket: Resource<TcpSocket>) -> SocketResult<Duration> {
@@ -428,9 +437,9 @@ impl HostTcpSocket for WasiSocketsCtxView<'_> {
         socket: Resource<TcpSocket>,
         value: Duration,
     ) -> SocketResult<()> {
-        let sock = get_socket_mut(self.table, &socket)?;
-        sock.set_keep_alive_idle_time(value)?;
-        Ok(())
+        self.table
+            .update_resource(&socket, |sock| sock.set_keep_alive_idle_time(value))?
+            .map_err(SocketError::from)
     }
 
     fn get_keep_alive_interval(&mut self, socket: Resource<TcpSocket>) -> SocketResult<Duration> {
@@ -443,9 +452,9 @@ impl HostTcpSocket for WasiSocketsCtxView<'_> {
         socket: Resource<TcpSocket>,
         value: Duration,
     ) -> SocketResult<()> {
-        let sock = get_socket(self.table, &socket)?;
-        sock.set_keep_alive_interval(value)?;
-        Ok(())
+        self.table
+            .update_resource(&socket, |sock| sock.set_keep_alive_interval(value))?
+            .map_err(SocketError::from)
     }
 
     fn get_keep_alive_count(&mut self, socket: Resource<TcpSocket>) -> SocketResult<u32> {
@@ -458,9 +467,9 @@ impl HostTcpSocket for WasiSocketsCtxView<'_> {
         socket: Resource<TcpSocket>,
         value: u32,
     ) -> SocketResult<()> {
-        let sock = get_socket(self.table, &socket)?;
-        sock.set_keep_alive_count(value)?;
-        Ok(())
+        self.table
+            .update_resource(&socket, |sock| sock.set_keep_alive_count(value))?
+            .map_err(SocketError::from)
     }
 
     fn get_hop_limit(&mut self, socket: Resource<TcpSocket>) -> SocketResult<u8> {
@@ -469,9 +478,9 @@ impl HostTcpSocket for WasiSocketsCtxView<'_> {
     }
 
     fn set_hop_limit(&mut self, socket: Resource<TcpSocket>, value: u8) -> SocketResult<()> {
-        let sock = get_socket_mut(self.table, &socket)?;
-        sock.set_hop_limit(value)?;
-        Ok(())
+        self.table
+            .update_resource(&socket, |sock| sock.set_hop_limit(value))?
+            .map_err(SocketError::from)
     }
 
     fn get_receive_buffer_size(&mut self, socket: Resource<TcpSocket>) -> SocketResult<u64> {
@@ -484,9 +493,9 @@ impl HostTcpSocket for WasiSocketsCtxView<'_> {
         socket: Resource<TcpSocket>,
         value: u64,
     ) -> SocketResult<()> {
-        let sock = get_socket_mut(self.table, &socket)?;
-        sock.set_receive_buffer_size(value)?;
-        Ok(())
+        self.table
+            .update_resource(&socket, |sock| sock.set_receive_buffer_size(value))?
+            .map_err(SocketError::from)
     }
 
     fn get_send_buffer_size(&mut self, socket: Resource<TcpSocket>) -> SocketResult<u64> {
@@ -499,9 +508,9 @@ impl HostTcpSocket for WasiSocketsCtxView<'_> {
         socket: Resource<TcpSocket>,
         value: u64,
     ) -> SocketResult<()> {
-        let sock = get_socket_mut(self.table, &socket)?;
-        sock.set_send_buffer_size(value)?;
-        Ok(())
+        self.table
+            .update_resource(&socket, |sock| sock.set_send_buffer_size(value))?
+            .map_err(SocketError::from)
     }
 
     fn drop(&mut self, sock: Resource<TcpSocket>) -> wasmtime::Result<()> {

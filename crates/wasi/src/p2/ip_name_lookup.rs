@@ -61,7 +61,7 @@ impl HostResolveAddressStream for WasiSocketsCtxView<'_> {
                         }
                         ResolveAddressStream::Done(slot @ Err(_)) => {
                             let err = mem::replace(slot, Ok(Vec::new().into_iter())).unwrap_err();
-                            result = Err(err.into());
+                            result = Err(err);
                             return;
                         }
                         ResolveAddressStream::Done(Ok(iter)) => {

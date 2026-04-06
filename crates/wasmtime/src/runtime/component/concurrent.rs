@@ -53,7 +53,7 @@
 use crate::bail_bug;
 use crate::component::func::{self, Func, call_post_return};
 use crate::component::{
-    HasData, HasSelf, HostHeapUsage, Instance, InstancePre, Resource, ResourceTable,
+    FixedHostHeapUsage, HasData, HasSelf, HostHeapUsage, Instance, Resource, ResourceTable,
     ResourceTableError, RuntimeInstance,
 };
 use crate::fiber::{self, StoreFiber, StoreFiberYield};
@@ -2569,16 +2569,6 @@ impl Instance {
         let guest_thread = state.push(new_thread)?;
         state.get_mut(guest_task)?.threads.insert(guest_thread);
 
-        if let Some(old_task) = old_task {
-            if !state.may_enter(guest_task) {
-                bail!(crate::Trap::CannotEnterComponent);
-            }
-
-            state.update(old_task, |t: &mut GuestTask| {
-                t.subtasks.insert(guest_task);
-            })?;
-        };
-
         // Make the new task the current one so that `Self::start_call` knows
         // which one to start.
         store.0.set_thread(QualifiedThreadId {
@@ -4315,12 +4305,7 @@ impl HostHeapUsage for HostTask {
     }
 }
 
-type CallbackFn = Box<
-    dyn Fn(&mut dyn VMStore, Instance, RuntimeComponentInstanceIndex, Event, u32) -> Result<u32>
-        + Send
-        + Sync
-        + 'static,
->;
+type CallbackFn = Box<dyn Fn(&mut dyn VMStore, Event, u32) -> Result<u32> + Send + Sync + 'static>;
 
 /// Represents the caller of a given guest task.
 enum Caller {
@@ -4461,6 +4446,8 @@ impl TableDebug for GuestThread {
         "GuestThread"
     }
 }
+
+impl FixedHostHeapUsage for GuestThread {}
 
 enum SyncResult {
     NotProduced,
@@ -4614,55 +4601,9 @@ impl GuestTask {
         })
     }
 
-    /// Dispose of this guest task, reparenting any pending subtasks to the
-    /// caller.
-    fn dispose(self, state: &mut ConcurrentState, me: TableId<GuestTask>) -> Result<()> {
-        // If there are not-yet-delivered completion events for subtasks in
-        // `self.sync_call_set`, recursively dispose of those subtasks as well.
-        for waitable in mem::take(&mut state.get_mut(self.sync_call_set)?.ready) {
-            if let Some(Event::Subtask {
-                status: Status::Returned | Status::ReturnCancelled,
-            }) = waitable.common(state)?.event
-            {
-                waitable.delete_from(state)?;
-            }
-        }
-
-        state.delete(self.sync_call_set)?;
-
-        // Reparent any pending subtasks to the caller.
-        if let Caller::Guest {
-            task,
-            instance: runtime_instance,
-        } = &self.caller
-        {
-            let task_id = *task;
-            let runtime_instance = *runtime_instance;
-            let my_subtasks: Vec<_> = self.subtasks.iter().copied().collect();
-            state.update(task_id, |task_mut: &mut GuestTask| {
-                let present = task_mut.subtasks.remove(&me);
-                assert!(present);
-                for subtask in &my_subtasks {
-                    task_mut.subtasks.insert(*subtask);
-                }
-            })?;
-
-            for subtask in &my_subtasks {
-                state.get_mut(*subtask)?.caller = Caller::Guest {
-                    task: task_id,
-                    instance: runtime_instance,
-                };
-            }
-        } else {
-            for subtask in &self.subtasks {
-                state.get_mut(*subtask)?.caller = Caller::Host {
-                    tx: None,
-                    remove_task_automatically: true,
-                    call_post_return_automatically: true,
-                };
-            }
-        }
-
+    /// Dispose of this guest task.
+    fn dispose(self, _state: &mut ConcurrentState) -> Result<()> {
+        assert!(self.threads.is_empty());
         Ok(())
     }
 }
@@ -4675,12 +4616,10 @@ impl TableDebug for GuestTask {
 
 impl HostHeapUsage for GuestTask {
     fn host_heap_usage(&self) -> usize {
-        // Account for inline struct plus the heap from the subtasks HashSet
-        // and boxed closures. The Box closures are opaque; we estimate with
-        // size_of for the pointer. The HashSet's per-entry overhead is
-        // approximated by the entry count * entry size.
+        // Account for inline struct plus the heap from the threads HashSet.
+        // The HashSet's per-entry overhead is approximated by entry count * entry size.
         core::mem::size_of_val(self)
-            + self.subtasks.len() * core::mem::size_of::<TableId<GuestTask>>()
+            + self.threads.len() * core::mem::size_of::<TableId<GuestThread>>()
     }
 }
 
@@ -5113,16 +5052,6 @@ impl ConcurrentState {
             .get_any_mut(Resource::<V>::from(id).rep())?
             .downcast_mut()
             .ok_or(ResourceTableError::WrongType)
-    }
-
-    fn update<V: 'static + HostHeapUsage, F: FnOnce(&mut V)>(
-        &mut self,
-        id: TableId<V>,
-        updater: F,
-    ) -> Result<(), ResourceTableError> {
-        self.table
-            .get_mut()
-            .update_resource(&Resource::from(id), updater)
     }
 
     pub fn add_child<T: 'static, U: 'static>(
