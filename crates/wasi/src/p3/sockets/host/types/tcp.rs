@@ -33,8 +33,6 @@ fn get_socket<'a>(
         .map_err(SocketError::trap)
 }
 
-
-
 struct ListenStreamProducer<T> {
     listener: Arc<TcpListener>,
     family: SocketAddressFamily,
@@ -269,16 +267,17 @@ impl HostTcpSocketWithStore for WasiSockets {
         socket: Resource<TcpSocket>,
     ) -> SocketResult<StreamReader<Resource<TcpSocket>>> {
         let getter = store.getter();
-        let (listener, family, options) = store
-            .get()
-            .table
-            .update_resource(&socket, |socket| -> SocketResult<_> {
-                socket.listen_p3()?;
-                let listener = socket.tcp_listener_arc().unwrap().clone();
-                let family = socket.address_family();
-                let options = socket.non_inherited_options().clone();
-                Ok((listener, family, options))
-            })??;
+        let (listener, family, options) =
+            store
+                .get()
+                .table
+                .update_resource(&socket, |socket| -> SocketResult<_> {
+                    socket.listen_p3()?;
+                    let listener = socket.tcp_listener_arc().unwrap().clone();
+                    let family = socket.address_family();
+                    let options = socket.non_inherited_options().clone();
+                    Ok((listener, family, options))
+                })??;
         let ret = StreamReader::new(
             &mut store,
             ListenStreamProducer {

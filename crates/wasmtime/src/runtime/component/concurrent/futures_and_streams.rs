@@ -240,7 +240,10 @@ pub(super) struct ErrorContextState {
 impl HostHeapUsage for ErrorContextState {
     fn host_heap_usage(&self) -> usize {
         core::mem::size_of_val(self)
-            + self.debug_msg.host_heap_usage().saturating_sub(core::mem::size_of::<String>())
+            + self
+                .debug_msg
+                .host_heap_usage()
+                .saturating_sub(core::mem::size_of::<String>())
     }
 }
 
