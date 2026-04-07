@@ -307,11 +307,15 @@ impl Pollable for HostFutureIncomingResponse {
 impl HostHeapUsage for HostIncomingRequest {
     fn host_heap_usage(&self) -> usize {
         // authority is a solely-owned String; account for its capacity.
-        // uri contains an internal String allocation; report its length as a
-        // lower bound since http::Uri doesn't expose its capacity.
+        // http::Uri doesn't expose its internal capacity, so we approximate
+        // its heap by summing the byte-lengths of its string components without
+        // allocating a temporary String (avoiding a per-call heap allocation).
         // headers is Arc-backed (FieldMap) and not solely owned — not tracked.
         // body is a child resource tracked separately when pushed.
-        core::mem::size_of_val(self) + self.authority.capacity() + self.uri.to_string().len()
+        let uri_approx = self.uri.scheme_str().map_or(0, str::len)
+            + self.uri.host().map_or(0, str::len)
+            + self.uri.path_and_query().map_or(0, |pq| pq.as_str().len());
+        core::mem::size_of_val(self) + self.authority.capacity() + uri_approx
     }
 }
 
