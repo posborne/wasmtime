@@ -103,14 +103,21 @@ pub struct Bucket {
 
 impl HostHeapUsage for Bucket {
     fn host_heap_usage(&self) -> usize {
-        // Account for the inline struct, then the heap allocated by each
-        // key/value pair stored in the map.
-        core::mem::size_of_val(self)
-            + self
-                .in_memory_data
-                .iter()
-                .map(|(k, v)| k.capacity() + v.capacity())
-                .sum::<usize>()
+        // Inline struct size (the HashMap itself: pointer + len + cap fields).
+        let mut total = core::mem::size_of_val(self);
+        // Hashbrown bucket-array allocation: capacity slots, each holding a
+        // key, a value, and one control byte.
+        let capacity = self.in_memory_data.capacity();
+        if capacity > 0 {
+            total += capacity
+                * (core::mem::size_of::<String>() + core::mem::size_of::<Vec<u8>>() + 1);
+        }
+        // Heap owned by each key and value beyond their inline footprint.
+        for (k, v) in &self.in_memory_data {
+            total += k.capacity(); // String heap (capacity() already excludes inline size)
+            total += v.capacity(); // Vec<u8> heap
+        }
+        total
     }
 }
 
