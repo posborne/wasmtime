@@ -1496,7 +1496,12 @@ impl StoreOpaque {
         )?;
 
         let state = self.concurrent_state_mut();
-        state.get_mut(guest_task)?.threads.insert(guest_thread);
+        state
+            .table
+            .get_mut()
+            .update_resource(&Resource::from(guest_task), |task| {
+                task.threads.insert(guest_thread);
+            })?;
 
         self.set_thread(QualifiedThreadId {
             task: guest_task,
@@ -2103,8 +2108,13 @@ impl Instance {
 
         store.concurrent_state_mut().delete(guest_thread.thread)?;
         store.concurrent_state_mut().delete(sync_call_set)?;
-        let task = store.concurrent_state_mut().get_mut(guest_thread.task)?;
-        task.threads.remove(&guest_thread.thread);
+        store
+            .concurrent_state_mut()
+            .table
+            .get_mut()
+            .update_resource(&Resource::from(guest_thread.task), |task| {
+                task.threads.remove(&guest_thread.thread);
+            })?;
         Ok(())
     }
 
@@ -2567,7 +2577,12 @@ impl Instance {
         let guest_task = state.push(new_task)?;
         let new_thread = GuestThread::new_implicit(state, guest_task)?;
         let guest_thread = state.push(new_thread)?;
-        state.get_mut(guest_task)?.threads.insert(guest_thread);
+        state
+            .table
+            .get_mut()
+            .update_resource(&Resource::from(guest_task), |task| {
+                task.threads.insert(guest_thread);
+            })?;
 
         // Make the new task the current one so that `Self::start_call` knows
         // which one to start.
@@ -3321,7 +3336,12 @@ impl Instance {
 
         let new_thread = GuestThread::new_explicit(state, parent_task, start_func)?;
         let thread_id = state.push(new_thread)?;
-        state.get_mut(parent_task)?.threads.insert(thread_id);
+        state
+            .table
+            .get_mut()
+            .update_resource(&Resource::from(parent_task), |task| {
+                task.threads.insert(thread_id);
+            })?;
 
         log::trace!("new thread with id {thread_id:?} created");
 
@@ -3654,7 +3674,12 @@ impl Instance {
                 let instance = task.instance;
 
                 assert_eq!(1, task.threads.len());
-                let thread = mem::take(&mut task.threads).into_iter().next().unwrap();
+                let thread = concurrent_state
+                    .table
+                    .get_mut()
+                    .update_resource(&Resource::from(guest_task), |task| {
+                        mem::take(&mut task.threads).into_iter().next().unwrap()
+                    })?;
                 let concurrent_state = store.concurrent_state_mut();
                 concurrent_state.delete(thread)?;
                 assert!(concurrent_state.get_mut(guest_task)?.ready_to_delete());
@@ -5046,6 +5071,13 @@ impl ConcurrentState {
         self.table.get_mut().push(value).map(TableId::from)
     }
 
+    /// Get a mutable reference to a table entry by id.
+    ///
+    /// **Note:** This bypasses heap-usage tracking. Callers must not use the
+    /// returned reference to mutate fields that change the value's heap
+    /// footprint (e.g. inserting into or removing from a `HashSet` field).
+    /// For mutations that do change heap footprint, use
+    /// [`ResourceTable::update_resource`] directly on `self.table`.
     fn get_mut<V: 'static>(&mut self, id: TableId<V>) -> Result<&mut V, ResourceTableError> {
         self.table
             .get_mut()
@@ -5453,7 +5485,12 @@ pub(crate) fn prepare_call<T, R>(
     let task = state.push(task)?;
     let new_thread = GuestThread::new_implicit(state, task)?;
     let thread = state.push(new_thread)?;
-    state.get_mut(task)?.threads.insert(thread);
+    state
+        .table
+        .get_mut()
+        .update_resource(&Resource::from(task), |t| {
+            t.threads.insert(thread);
+        })?;
 
     if !store.0.may_enter(instance)? {
         bail!(Trap::CannotEnterComponent);
