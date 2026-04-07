@@ -283,14 +283,18 @@ impl Pollable for Box<dyn InputStream> {
     }
 }
 
-/// The `Box<dyn InputStream>` fat pointer is two words wide and does not grow
-/// through stream operations; the inner concrete type's heap is tracked by its
-/// own `HostHeapUsage` impl at push time.
+/// `Box<dyn InputStream>` is a fat pointer (two words wide). The inner
+/// concrete type's heap is **not** tracked once it is boxed — only the
+/// pointer-sized inline footprint is reported. Implementations that care
+/// about inner heap accuracy should push the concrete type directly before
+/// boxing, or implement a custom `HostHeapUsage` wrapper.
 impl wasmtime::component::FixedHostHeapUsage for Box<dyn InputStream> {}
 
-/// The `Box<dyn OutputStream>` fat pointer is two words wide and does not grow
-/// through stream operations; the inner concrete type's heap is tracked by its
-/// own `HostHeapUsage` impl at push time.
+/// `Box<dyn OutputStream>` is a fat pointer (two words wide). The inner
+/// concrete type's heap is **not** tracked once it is boxed — only the
+/// pointer-sized inline footprint is reported. Implementations that care
+/// about inner heap accuracy should push the concrete type directly before
+/// boxing, or implement a custom `HostHeapUsage` wrapper.
 impl wasmtime::component::FixedHostHeapUsage for Box<dyn OutputStream> {}
 
 pub type DynInputStream = Box<dyn InputStream>;
