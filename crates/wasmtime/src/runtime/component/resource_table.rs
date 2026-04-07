@@ -326,8 +326,15 @@ impl ResourceTable {
     {
         let usage = entry.host_heap_usage();
         self.check_and_add_usage(usage)?;
-        let idx = self.push_(TableEntry::new(Box::new(entry), None))?;
-        Ok(Resource::new_own(idx))
+        match self.push_(TableEntry::new(Box::new(entry), None)) {
+            Ok(idx) => Ok(Resource::new_own(idx)),
+            Err(e) => {
+                // Roll back the usage we speculatively added above.
+                self.current_host_heap_usage =
+                    self.current_host_heap_usage.saturating_sub(usage);
+                Err(e)
+            }
+        }
     }
 
     /// Pop an index off of the free list, if it's not empty.
@@ -442,9 +449,18 @@ impl ResourceTable {
         self.check_and_add_usage(usage)?;
         let parent = parent.rep();
         self.occupied(parent)?;
-        let child = self.push_(TableEntry::new(Box::new(entry), Some(parent)))?;
-        self.occupied_mut(parent)?.add_child(child);
-        Ok(Resource::new_own(child))
+        match self.push_(TableEntry::new(Box::new(entry), Some(parent))) {
+            Ok(child) => {
+                self.occupied_mut(parent)?.add_child(child);
+                Ok(Resource::new_own(child))
+            }
+            Err(e) => {
+                // Roll back the usage we speculatively added above.
+                self.current_host_heap_usage =
+                    self.current_host_heap_usage.saturating_sub(usage);
+                Err(e)
+            }
+        }
     }
 
     /// Add an already-resident child to a resource.
@@ -1035,6 +1051,29 @@ mod tests {
             guard.finish().unwrap();
         }
         assert_eq!(table.current_host_heap_usage(), 50);
+    }
+
+    #[test]
+    fn test_heap_usage_not_leaked_on_push_full() {
+        // When push() fails because the table is full, the speculatively-added
+        // usage must be rolled back so the counter stays accurate.
+        let mut table = ResourceTable::new();
+        table.set_max_capacity(1);
+        table.set_max_host_heap_usage(Some(1000));
+
+        let r = table.push(Tracked(100)).unwrap();
+        assert_eq!(table.current_host_heap_usage(), 100);
+
+        // The table is now full (capacity 1, one entry); this push should fail
+        // with Full, not HostMemoryLimitExceeded.
+        let err = table.push(Tracked(100)).unwrap_err();
+        assert!(matches!(err, ResourceTableError::Full));
+
+        // Counter must be unchanged — no leak.
+        assert_eq!(table.current_host_heap_usage(), 100);
+
+        table.delete(r).unwrap();
+        assert_eq!(table.current_host_heap_usage(), 0);
     }
 }
 
