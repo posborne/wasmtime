@@ -109,8 +109,8 @@ impl HostHeapUsage for Bucket {
         // key, a value, and one control byte.
         let capacity = self.in_memory_data.capacity();
         if capacity > 0 {
-            total += capacity
-                * (core::mem::size_of::<String>() + core::mem::size_of::<Vec<u8>>() + 1);
+            total +=
+                capacity * (core::mem::size_of::<String>() + core::mem::size_of::<Vec<u8>>() + 1);
         }
         // Heap owned by each key and value beyond their inline footprint.
         for (k, v) in &self.in_memory_data {

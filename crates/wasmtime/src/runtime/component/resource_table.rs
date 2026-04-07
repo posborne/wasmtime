@@ -330,8 +330,7 @@ impl ResourceTable {
             Ok(idx) => Ok(Resource::new_own(idx)),
             Err(e) => {
                 // Roll back the usage we speculatively added above.
-                self.current_host_heap_usage =
-                    self.current_host_heap_usage.saturating_sub(usage);
+                self.current_host_heap_usage = self.current_host_heap_usage.saturating_sub(usage);
                 Err(e)
             }
         }
@@ -456,8 +455,7 @@ impl ResourceTable {
             }
             Err(e) => {
                 // Roll back the usage we speculatively added above.
-                self.current_host_heap_usage =
-                    self.current_host_heap_usage.saturating_sub(usage);
+                self.current_host_heap_usage = self.current_host_heap_usage.saturating_sub(usage);
                 Err(e)
             }
         }

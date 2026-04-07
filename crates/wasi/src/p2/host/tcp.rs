@@ -57,7 +57,9 @@ impl crate::p2::host::tcp::tcp::HostTcpSocket for WasiSocketsCtxView<'_> {
         // Start connection
         self.table
             .update_resource(&this, |socket| {
-                let future = socket.start_connect(&remote_address)?.connect(remote_address);
+                let future = socket
+                    .start_connect(&remote_address)?
+                    .connect(remote_address);
                 socket.set_pending_connect(future)
             })?
             .map_err(Into::into)
