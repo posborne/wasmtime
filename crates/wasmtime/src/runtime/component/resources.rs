@@ -5,7 +5,7 @@ mod host_static;
 mod host_tables;
 mod ty;
 
-use std::collections::HashMap;
+use crate::hash_map::HashMap;
 
 pub use any::*;
 pub use host_dynamic::*;
@@ -224,10 +224,10 @@ where
             // don't double-count the size of the container included in the capacity calculation
             total += key
                 .host_heap_usage()
-                .saturating_sub(core::mem::size_of::<K>());
+                .saturating_sub(core::mem::size_of::<K>()) as usize;
             total += value
                 .host_heap_usage()
-                .saturating_sub(core::mem::size_of::<V>());
+                .saturating_sub(core::mem::size_of::<V>()) as usize;
         }
 
         total
