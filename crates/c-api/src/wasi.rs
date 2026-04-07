@@ -10,6 +10,7 @@ use std::slice;
 use std::task::{Context, Poll};
 use tokio::io::{self, AsyncWrite};
 use wasmtime::Result;
+use wasmtime::component::FixedHostHeapUsage;
 use wasmtime_wasi::WasiCtxBuilder;
 use wasmtime_wasi::p1::WasiP1Ctx;
 use wasmtime_wasi_io::streams::StreamError;
@@ -189,6 +190,10 @@ impl CustomOutputStream {
         }
     }
 }
+
+// CustomOutputStream wraps an Arc<CustomOutputStreamInner>; the Arc pointer is
+// fixed-size inline and the pointee is shared, so heap footprint is constant.
+impl FixedHostHeapUsage for CustomOutputStream {}
 
 #[async_trait::async_trait]
 impl wasmtime_wasi::p2::Pollable for CustomOutputStream {

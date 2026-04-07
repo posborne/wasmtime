@@ -1,7 +1,7 @@
 use crate::util::PipeProducer;
 use futures::channel::mpsc;
 use wasmtime::Result;
-use wasmtime::component::{Accessor, Resource, StreamReader};
+use wasmtime::component::{Accessor, FixedHostHeapUsage, Resource, StreamReader};
 
 use super::Ctx;
 
@@ -20,6 +20,7 @@ pub mod bindings {
 }
 
 pub struct ResourceStreamX;
+impl FixedHostHeapUsage for ResourceStreamX {}
 
 impl bindings::local::local::resource_stream::HostX for Ctx {
     fn foo(&mut self, x: Resource<ResourceStreamX>) -> Result<()> {

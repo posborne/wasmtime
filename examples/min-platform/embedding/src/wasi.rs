@@ -31,7 +31,7 @@ use core::fmt::Write as _;
 use core::future::Future;
 use core::pin::Pin;
 use core::task::{Context, Poll, Waker};
-use wasmtime::component::{Component, Linker, Resource, ResourceTable};
+use wasmtime::component::{Component, FixedHostHeapUsage, Linker, Resource, ResourceTable};
 use wasmtime::{Engine, Result, Store, bail};
 use wasmtime_wasi_io::{
     IoView,
@@ -259,6 +259,9 @@ struct Deadline {
     clock: Clock,
     due: u64,
 }
+// Deadline holds a Clock (Rc<Cell<u64>>) and a u64; the Rc pointer is
+// fixed-size inline and the shared cell is not solely owned.
+impl FixedHostHeapUsage for Deadline {}
 impl Future for Deadline {
     type Output = ();
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -281,6 +284,7 @@ impl Pollable for Deadline {
 // An input-stream which is never ready for reading is used to implement
 // stdin.
 struct NeverReadable;
+impl FixedHostHeapUsage for NeverReadable {}
 #[wasmtime_wasi_io::async_trait]
 impl Pollable for NeverReadable {
     async fn ready(&mut self) {
@@ -308,6 +312,9 @@ impl InputStream for NeverReadable {
 struct WriteLog {
     log: Rc<RefCell<VecDeque<Bytes>>>,
 }
+// WriteLog holds an Rc<RefCell<...>>; the Rc pointer is fixed-size inline and
+// the shared state is not solely owned by this value.
+impl FixedHostHeapUsage for WriteLog {}
 impl WriteLog {
     fn new() -> Self {
         Self {
@@ -584,6 +591,9 @@ impl wasi::cli::terminal_output::HostTerminalOutput for ExampleCtx {
         Ok(())
     }
 }
+// The generated terminal resource types are zero-sized unit structs.
+impl FixedHostHeapUsage for wasi::cli::terminal_input::TerminalInput {}
+impl FixedHostHeapUsage for wasi::cli::terminal_output::TerminalOutput {}
 impl wasi::cli::terminal_stdin::Host for ExampleCtx {
     fn get_terminal_stdin(
         &mut self,

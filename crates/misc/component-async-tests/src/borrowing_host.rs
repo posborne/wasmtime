@@ -1,5 +1,5 @@
 use wasmtime::Result;
-use wasmtime::component::Resource;
+use wasmtime::component::{FixedHostHeapUsage, Resource};
 
 use super::Ctx;
 
@@ -16,6 +16,7 @@ pub mod bindings {
 
 /// Used as the borrowing type (`local:local/borrowing-types.x`)
 pub struct MyX;
+impl FixedHostHeapUsage for MyX {}
 
 impl bindings::local::local::borrowing_types::HostX for &mut Ctx {
     fn new(&mut self) -> Result<Resource<MyX>> {
