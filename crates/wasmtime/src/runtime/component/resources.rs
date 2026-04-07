@@ -224,10 +224,10 @@ where
             // don't double-count the size of the container included in the capacity calculation
             total += key
                 .host_heap_usage()
-                .saturating_sub(core::mem::size_of::<K>()) as usize;
+                .saturating_sub(core::mem::size_of::<K>());
             total += value
                 .host_heap_usage()
-                .saturating_sub(core::mem::size_of::<V>()) as usize;
+                .saturating_sub(core::mem::size_of::<V>());
         }
 
         total
