@@ -29,15 +29,15 @@ impl crate::p2::host::tcp::tcp::HostTcpSocket for WasiSocketsCtxView<'_> {
             .await?;
 
         // Bind to the address.
-        self.table.borrow_mut(&this)?.start_bind(local_address)?;
-
-        Ok(())
+        self.table
+            .update_resource(&this, |socket| socket.start_bind(local_address))?
+            .map_err(Into::into)
     }
 
     fn finish_bind(&mut self, this: Resource<TcpSocket>) -> SocketResult<()> {
-        let mut socket = self.table.borrow_mut(&this)?;
-        socket.finish_bind()?;
-        Ok(())
+        self.table
+            .update_resource(&this, |socket| socket.finish_bind())?
+            .map_err(Into::into)
     }
 
     async fn start_connect(
@@ -55,13 +55,12 @@ impl crate::p2::host::tcp::tcp::HostTcpSocket for WasiSocketsCtxView<'_> {
             .await?;
 
         // Start connection
-        let mut socket = self.table.borrow_mut(&this)?;
-        let future = socket
-            .start_connect(&remote_address)?
-            .connect(remote_address);
-        socket.set_pending_connect(future)?;
-
-        Ok(())
+        self.table
+            .update_resource(&this, |socket| {
+                let future = socket.start_connect(&remote_address)?.connect(remote_address);
+                socket.set_pending_connect(future)
+            })?
+            .map_err(Into::into)
     }
 
     fn finish_connect(
@@ -84,17 +83,15 @@ impl crate::p2::host::tcp::tcp::HostTcpSocket for WasiSocketsCtxView<'_> {
     }
 
     fn start_listen(&mut self, this: Resource<TcpSocket>) -> SocketResult<()> {
-        let mut socket = self.table.borrow_mut(&this)?;
-
-        socket.start_listen_p2()?;
-        Ok(())
+        self.table
+            .update_resource(&this, |socket| socket.start_listen_p2())?
+            .map_err(Into::into)
     }
 
     fn finish_listen(&mut self, this: Resource<TcpSocket>) -> SocketResult<()> {
-        let mut socket = self.table.borrow_mut(&this)?;
-        socket.finish_listen_p2()?;
-        socket.finish()?;
-        Ok(())
+        self.table
+            .update_resource(&this, |socket| socket.finish_listen_p2())?
+            .map_err(Into::into)
     }
 
     fn accept(
@@ -149,9 +146,9 @@ impl crate::p2::host::tcp::tcp::HostTcpSocket for WasiSocketsCtxView<'_> {
         this: Resource<TcpSocket>,
         value: u64,
     ) -> SocketResult<()> {
-        let mut socket = self.table.borrow_mut(&this)?;
-        socket.set_listen_backlog_size(value)?;
-        Ok(())
+        self.table
+            .update_resource(&this, |socket| socket.set_listen_backlog_size(value))?
+            .map_err(Into::into)
     }
 
     fn keep_alive_enabled(&mut self, this: Resource<TcpSocket>) -> SocketResult<bool> {
@@ -179,9 +176,9 @@ impl crate::p2::host::tcp::tcp::HostTcpSocket for WasiSocketsCtxView<'_> {
         this: Resource<TcpSocket>,
         value: u64,
     ) -> SocketResult<()> {
-        let mut socket = self.table.borrow_mut(&this)?;
-        socket.set_keep_alive_idle_time(value)?;
-        Ok(())
+        self.table
+            .update_resource(&this, |socket| socket.set_keep_alive_idle_time(value))?
+            .map_err(Into::into)
     }
 
     fn keep_alive_interval(&mut self, this: Resource<TcpSocket>) -> SocketResult<u64> {
@@ -216,9 +213,9 @@ impl crate::p2::host::tcp::tcp::HostTcpSocket for WasiSocketsCtxView<'_> {
     }
 
     fn set_hop_limit(&mut self, this: Resource<TcpSocket>, value: u8) -> SocketResult<()> {
-        let mut socket = self.table.borrow_mut(&this)?;
-        socket.set_hop_limit(value)?;
-        Ok(())
+        self.table
+            .update_resource(&this, |socket| socket.set_hop_limit(value))?
+            .map_err(Into::into)
     }
 
     fn receive_buffer_size(&mut self, this: Resource<TcpSocket>) -> SocketResult<u64> {
@@ -231,9 +228,9 @@ impl crate::p2::host::tcp::tcp::HostTcpSocket for WasiSocketsCtxView<'_> {
         this: Resource<TcpSocket>,
         value: u64,
     ) -> SocketResult<()> {
-        let mut socket = self.table.borrow_mut(&this)?;
-        socket.set_receive_buffer_size(value)?;
-        Ok(())
+        self.table
+            .update_resource(&this, |socket| socket.set_receive_buffer_size(value))?
+            .map_err(Into::into)
     }
 
     fn send_buffer_size(&mut self, this: Resource<TcpSocket>) -> SocketResult<u64> {
@@ -242,9 +239,9 @@ impl crate::p2::host::tcp::tcp::HostTcpSocket for WasiSocketsCtxView<'_> {
     }
 
     fn set_send_buffer_size(&mut self, this: Resource<TcpSocket>, value: u64) -> SocketResult<()> {
-        let mut socket = self.table.borrow_mut(&this)?;
-        socket.set_send_buffer_size(value)?;
-        Ok(())
+        self.table
+            .update_resource(&this, |socket| socket.set_send_buffer_size(value))?
+            .map_err(Into::into)
     }
 
     fn subscribe(&mut self, this: Resource<TcpSocket>) -> wasmtime::Result<Resource<DynPollable>> {
