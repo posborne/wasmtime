@@ -114,6 +114,7 @@ mod resource_table;
 mod resources;
 mod storage;
 pub(crate) mod store;
+mod tracked_collections;
 pub mod types;
 mod values;
 pub use self::component::{Component, ComponentExportIndex, ExportLookup};
@@ -135,7 +136,10 @@ pub use self::has_data::*;
 pub use self::instance::{Instance, InstancePre};
 pub use self::linker::{Linker, LinkerInstance};
 pub use self::resource_table::{ResourceTable, ResourceTableError};
-pub use self::resources::{Resource, ResourceAny, ResourceDynamic};
+pub use self::resources::{
+    FixedHostHeapUsage, HostHeapUsage, Resource, ResourceAny, ResourceDynamic,
+};
+pub use self::tracked_collections::{TrackedHashMap, TrackedHashSet, TrackedVec};
 pub use self::types::{ResourceType, Type};
 pub use self::values::Val;
 
@@ -798,6 +802,7 @@ pub use wasmtime_component_macro::Lower;
 /// [`BitXorAssign`]: std::ops::BitXorAssign
 /// [`Not`]: std::ops::Not
 pub use wasmtime_component_macro::flags;
+pub use wasmtime_component_macro::{FixedHostHeapUsage, HostHeapUsage};
 
 #[cfg(any(docsrs, test, doctest))]
 pub mod bindgen_examples;

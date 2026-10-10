@@ -1,5 +1,5 @@
 use wasmtime::Result;
-use wasmtime::component::Resource;
+use wasmtime::component::{FixedHostHeapUsage, HostHeapUsage, Resource};
 use wasmtime_wasi::async_trait;
 use wasmtime_wasi::p2::Pollable;
 use wasmtime_wasi::p2::{DynInputStream, DynOutputStream, DynPollable, IoError};
@@ -155,3 +155,20 @@ impl<'a> bindings::types::HostClientConnection for WasiTlsCtxView<'a> {
         Ok(())
     }
 }
+
+impl HostHeapUsage for HostClientHandshake {
+    fn heap_size_of_children(&self) -> usize {
+        // Internal TLS handshake engine allocations in the boxed TlsTransport
+        // are managed by rustls/openssl and out of scope.
+        self.server_name.heap_size_of_children()
+    }
+}
+
+// HostFutureClientStreams contains a WasiFuture whose background execution
+// state is managed by the task executor; once resolved, client streams are
+// pushed to the resource table directly.
+impl FixedHostHeapUsage for HostFutureClientStreams {}
+
+// HostClientConnection wraps Arc<Mutex<WriteState<IO>>>; close() transitions
+// the state machine but does not change the inline struct size.
+impl FixedHostHeapUsage for HostClientConnection {}

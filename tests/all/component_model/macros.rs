@@ -691,3 +691,51 @@ fn flags() -> Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn host_heap_usage_derive() {
+    use wasmtime::component::{FixedHostHeapUsage, HostHeapUsage};
+
+    #[derive(FixedHostHeapUsage)]
+    #[allow(dead_code)]
+    struct FixedStruct {
+        a: u32,
+        b: bool,
+    }
+
+    assert_eq!(FixedStruct { a: 1, b: true }.heap_size_of_children(), 0);
+
+    #[derive(HostHeapUsage)]
+    #[allow(dead_code)]
+    struct DynamicStruct {
+        fixed: FixedStruct,
+        name: String,
+        numbers: Vec<u32>,
+    }
+
+    let s = DynamicStruct {
+        fixed: FixedStruct { a: 10, b: false },
+        name: String::from("hello"),
+        numbers: vec![1, 2, 3, 4],
+    };
+    assert_eq!(
+        s.heap_size_of_children(),
+        s.name.heap_size_of_children() + s.numbers.heap_size_of_children()
+    );
+
+    #[derive(HostHeapUsage)]
+    #[allow(dead_code)]
+    enum DynamicEnum {
+        Empty,
+        Fixed(FixedStruct),
+        Data(Vec<u8>),
+    }
+
+    assert_eq!(DynamicEnum::Empty.heap_size_of_children(), 0);
+    assert_eq!(
+        DynamicEnum::Fixed(FixedStruct { a: 1, b: false }).heap_size_of_children(),
+        0
+    );
+    let d = DynamicEnum::Data(vec![0; 128]);
+    assert_eq!(d.heap_size_of_children(), 128);
+}

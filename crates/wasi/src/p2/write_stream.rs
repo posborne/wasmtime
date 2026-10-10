@@ -3,6 +3,7 @@ use bytes::Bytes;
 use std::pin::pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
+use wasmtime::component::HostHeapUsage;
 use wasmtime::format_err;
 
 #[derive(Debug)]
@@ -209,5 +210,15 @@ impl OutputStream for AsyncWriteStream {
 impl Pollable for AsyncWriteStream {
     async fn ready(&mut self) {
         std::future::poll_fn(|cx| self.poll_ready(cx)).await
+    }
+}
+
+impl HostHeapUsage for AsyncWriteStream {
+    fn heap_size_of_children(&self) -> usize {
+        self.worker.state.try_lock().map_or(0, |state| {
+            let buffer_bytes: usize = state.items.iter().map(|b| b.len()).sum();
+            let deque_overhead = state.items.capacity() * core::mem::size_of::<bytes::Bytes>();
+            buffer_bytes + deque_overhead
+        })
     }
 }

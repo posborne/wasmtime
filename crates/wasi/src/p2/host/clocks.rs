@@ -6,7 +6,7 @@ use crate::p2::bindings::{
 };
 use std::time::Duration;
 use std::time::SystemTime;
-use wasmtime::component::Resource;
+use wasmtime::component::{FixedHostHeapUsage, Resource};
 use wasmtime_wasi_io::poll::{Pollable, subscribe};
 
 impl TryFrom<crate::clocks::Datetime> for Datetime {
@@ -203,3 +203,6 @@ mod named {
         }
     }
 }
+
+// Deadline is an enum of fixed-size variants (no heap allocation).
+impl FixedHostHeapUsage for Deadline {}

@@ -95,14 +95,14 @@ impl types::HostFields for WasiHttpCtxView<'_> {
         name: String,
         values: Vec<Vec<u8>>,
     ) -> HeaderResult<()> {
-        let fields = self.table.get_mut(&fields)?;
-        fields.set(self.hooks, name, values)?;
+        self.table
+            .update_resource(&fields, |fields| fields.set(self.hooks, name, values))??;
         Ok(())
     }
 
     fn delete(&mut self, fields: Resource<FieldMap>, name: String) -> HeaderResult<()> {
-        let fields = self.table.get_mut(&fields)?;
-        fields.remove_all(self.hooks, name)?;
+        self.table
+            .update_resource(&fields, |fields| fields.remove_all(self.hooks, name))??;
         Ok(())
     }
 
@@ -112,8 +112,8 @@ impl types::HostFields for WasiHttpCtxView<'_> {
         name: String,
         value: Vec<u8>,
     ) -> HeaderResult<()> {
-        let fields = self.table.get_mut(&fields)?;
-        fields.append(self.hooks, name, value)?;
+        self.table
+            .update_resource(&fields, |fields| fields.append(self.hooks, name, value))??;
         Ok(())
     }
 
@@ -175,8 +175,8 @@ impl types::HostIncomingRequest for WasiHttpCtxView<'_> {
         &mut self,
         id: Resource<HostIncomingRequest>,
     ) -> wasmtime::Result<Result<Resource<HostIncomingBody>, ()>> {
-        let req = self.table.get_mut(&id)?;
-        match req.body.take() {
+        let body = self.table.update_resource(&id, |req| req.body.take())?;
+        match body {
             Some(body) => {
                 let id = self.table.push(body)?;
                 Ok(Ok(id))
@@ -220,7 +220,7 @@ impl types::HostOutgoingRequest for WasiHttpCtxView<'_> {
         let chunk_size = self.hooks.p2_outgoing_body_chunk_size();
         let req = self
             .table
-            .get_mut(&request)
+            .get(&request)
             .context("[outgoing_request_write] getting request")?;
 
         if req.body.is_some() {
@@ -235,7 +235,9 @@ impl types::HostOutgoingRequest for WasiHttpCtxView<'_> {
         let (host_body, hyper_body) =
             HostOutgoingBody::new(StreamContext::Request, size, buffer_chunks, chunk_size);
 
-        req.body = Some(hyper_body);
+        self.table
+            .update_resource(&request, |req| req.body = Some(hyper_body))
+            .context("[outgoing_request_write] setting body")?;
 
         // The output stream will necessarily outlive the request, because we could be still
         // writing to the stream after `outgoing-handler.handle` is called.
@@ -261,16 +263,13 @@ impl types::HostOutgoingRequest for WasiHttpCtxView<'_> {
         request: wasmtime::component::Resource<types::OutgoingRequest>,
         method: Method,
     ) -> wasmtime::Result<Result<(), ()>> {
-        let req = self.table.get_mut(&request)?;
-
         if let Method::Other(s) = &method {
             if let Err(_) = http::Method::from_str(s) {
                 return Ok(Err(()));
             }
         }
-
-        req.method = method;
-
+        self.table
+            .update_resource(&request, |req| req.method = method)?;
         Ok(Ok(()))
     }
 
@@ -286,16 +285,13 @@ impl types::HostOutgoingRequest for WasiHttpCtxView<'_> {
         request: wasmtime::component::Resource<types::OutgoingRequest>,
         path_with_query: Option<String>,
     ) -> wasmtime::Result<Result<(), ()>> {
-        let req = self.table.get_mut(&request)?;
-
         if let Some(s) = path_with_query.as_ref() {
             if crate::parse_path_with_query(s).is_none() {
                 return Ok(Err(()));
             }
         }
-
-        req.path_with_query = path_with_query;
-
+        self.table
+            .update_resource(&request, |req| req.path_with_query = path_with_query)?;
         Ok(Ok(()))
     }
 
@@ -311,16 +307,13 @@ impl types::HostOutgoingRequest for WasiHttpCtxView<'_> {
         request: wasmtime::component::Resource<types::OutgoingRequest>,
         scheme: Option<Scheme>,
     ) -> wasmtime::Result<Result<(), ()>> {
-        let req = self.table.get_mut(&request)?;
-
         if let Some(types::Scheme::Other(s)) = scheme.as_ref() {
             if let Err(_) = http::uri::Scheme::from_str(s.as_str()) {
                 return Ok(Err(()));
             }
         }
-
-        req.scheme = scheme;
-
+        self.table
+            .update_resource(&request, |req| req.scheme = scheme)?;
         Ok(Ok(()))
     }
 
@@ -336,19 +329,18 @@ impl types::HostOutgoingRequest for WasiHttpCtxView<'_> {
         request: wasmtime::component::Resource<types::OutgoingRequest>,
         authority: Option<String>,
     ) -> wasmtime::Result<Result<(), ()>> {
-        let req = self.table.get_mut(&request)?;
-
         // Match p3: reject empty / non-numeric / out-of-range ports that
         // `http::uri::Authority` alone would accept (see crate::parse_authority).
-        if let Some(s) = authority {
+        let authority = if let Some(s) = authority {
             let Ok(parsed) = crate::parse_authority(s) else {
                 return Ok(Err(()));
             };
-            req.authority = Some(parsed.as_str().into());
+            Some(parsed.as_str().into())
         } else {
-            req.authority = None;
-        }
-
+            None
+        };
+        self.table
+            .update_resource(&request, |req| req.authority = authority)?;
         Ok(Ok(()))
     }
 
@@ -422,12 +414,12 @@ impl types::HostIncomingResponse for WasiHttpCtxView<'_> {
         &mut self,
         response: Resource<HostIncomingResponse>,
     ) -> wasmtime::Result<Result<Resource<HostIncomingBody>, ()>> {
-        let r = self
+        let body = self
             .table
-            .get_mut(&response)
+            .update_resource(&response, |r| r.body.take())
             .context("[incoming_response_consume] getting response")?;
 
-        match r.body.take() {
+        match body {
             Some(body) => {
                 let id = self.table.push(body)?;
                 Ok(Ok(id))
@@ -542,7 +534,7 @@ impl types::HostOutgoingResponse for WasiHttpCtxView<'_> {
     ) -> wasmtime::Result<Result<Resource<HostOutgoingBody>, ()>> {
         let buffer_chunks = self.hooks.p2_outgoing_body_buffer_chunks();
         let chunk_size = self.hooks.p2_outgoing_body_chunk_size();
-        let resp = self.table.get_mut(&id)?;
+        let resp = self.table.get(&id)?;
 
         if resp.body.is_some() {
             return Ok(Err(()));
@@ -556,7 +548,8 @@ impl types::HostOutgoingResponse for WasiHttpCtxView<'_> {
         let (host, body) =
             HostOutgoingBody::new(StreamContext::Response, size, buffer_chunks, chunk_size);
 
-        resp.body.replace(body);
+        self.table
+            .update_resource(&id, |resp| resp.body = Some(body))?;
 
         let id = self.table.push(host)?;
 
@@ -575,12 +568,13 @@ impl types::HostOutgoingResponse for WasiHttpCtxView<'_> {
         id: Resource<HostOutgoingResponse>,
         status: types::StatusCode,
     ) -> wasmtime::Result<Result<(), ()>> {
-        let resp = self.table.get_mut(&id)?;
-
-        match http::StatusCode::from_u16(status) {
-            Ok(status) => resp.status = status,
+        let status = match http::StatusCode::from_u16(status) {
+            Ok(status) => status,
             Err(_) => return Ok(Err(())),
         };
+
+        self.table
+            .update_resource(&id, |resp| resp.status = status)?;
 
         Ok(Ok(()))
     }

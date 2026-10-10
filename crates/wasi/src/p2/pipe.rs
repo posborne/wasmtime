@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use tokio::io::{self, AsyncRead, AsyncWrite};
 use tokio::sync::mpsc;
+use wasmtime::component::{FixedHostHeapUsage, HostHeapUsage};
 use wasmtime::format_err;
 use wasmtime_wasi_io::{
     poll::Pollable,
@@ -333,11 +334,38 @@ impl Pollable for ClosedOutputStream {
     async fn ready(&mut self) {}
 }
 
+impl HostHeapUsage for MemoryInputPipe {
+    fn heap_size_of_children(&self) -> usize {
+        self.buffer.lock().map_or(0, |buf| buf.len())
+    }
+}
+
+impl HostHeapUsage for MemoryOutputPipe {
+    fn heap_size_of_children(&self) -> usize {
+        self.buffer.lock().map_or(0, |buf| buf.capacity())
+    }
+}
+
+impl HostHeapUsage for AsyncReadStream {
+    fn heap_size_of_children(&self) -> usize {
+        // Account for any buffered chunk currently staged for the guest to read.
+        self.buffer
+            .as_ref()
+            .and_then(|r| r.as_ref().ok())
+            .map_or(0, |b| b.len())
+    }
+}
+
+impl FixedHostHeapUsage for SinkOutputStream {}
+impl FixedHostHeapUsage for ClosedInputStream {}
+impl FixedHostHeapUsage for ClosedOutputStream {}
+
 #[cfg(test)]
 mod test {
     use super::*;
     use std::time::Duration;
     use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+    use wasmtime::component::ResourceTable;
 
     // This is a gross way to handle CI running under qemu for non-x86 architectures.
     #[cfg(not(target_arch = "x86_64"))]
@@ -903,5 +931,53 @@ mod test {
             .await
             .expect("ready is ok");
         assert_eq!(permit, 1024);
+    }
+
+    #[test]
+    fn test_memory_pipe_heap_usage() {
+        let input = MemoryInputPipe::new(Bytes::from_static(b"hello world"));
+        assert_eq!(input.heap_size_of_children(), 11);
+
+        let mut output = MemoryOutputPipe::new(1024);
+        assert_eq!(output.heap_size_of_children(), 0);
+        wasmtime_wasi_io::streams::OutputStream::write(
+            &mut output,
+            Bytes::from_static(b"testing123"),
+        )
+        .unwrap();
+        assert!(output.heap_size_of_children() >= 10);
+    }
+
+    #[test]
+    fn test_memory_output_pipe_resource_table_limit() {
+        let mut table = ResourceTable::new();
+        table.set_max_host_heap_usage(Some(128));
+
+        let pipe = MemoryOutputPipe::new(4096);
+        let r = table.push(pipe).unwrap();
+
+        // Mutating within limit succeeds
+        table
+            .update_resource(&r, |pipe| {
+                wasmtime_wasi_io::streams::OutputStream::write(
+                    pipe,
+                    Bytes::from_static(b"within limit"),
+                )
+                .unwrap();
+            })
+            .unwrap();
+
+        // Mutating beyond table limit triggers HostMemoryLimitExceeded
+        let err = table
+            .update_resource(&r, |pipe| {
+                wasmtime_wasi_io::streams::OutputStream::write(pipe, Bytes::from(vec![0u8; 256]))
+                    .unwrap();
+            })
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            wasmtime::component::ResourceTableError::HostMemoryLimitExceeded
+        ));
     }
 }

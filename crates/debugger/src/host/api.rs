@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use wasmtime::{
     Engine, ExnRef, FrameHandle, Func, Global, Instance, Module, OwnedRooted, Result, Table, Tag,
-    Val, component::Resource, component::ResourceTable,
+    Val, component::FixedHostHeapUsage, component::Resource, component::ResourceTable,
 };
 use wasmtime_wasi::p2::{DynPollable, Pollable, subscribe};
 
@@ -17,7 +17,7 @@ use wasmtime_wasi::p2::{DynPollable, Pollable, subscribe};
 /// The component-level resource is deliberately shared by both kinds of
 /// Wasmtime linear memory. Shared memories use their own host API and do not
 /// belong to a `Store`, unlike ordinary memories.
-#[derive(Clone)]
+#[derive(Clone, FixedHostHeapUsage)]
 pub enum Memory {
     Unshared(wasmtime::Memory),
     #[cfg(feature = "threads")]
@@ -52,6 +52,10 @@ pub struct Debuggee {
     /// handler treats the next epoch yield as an `Interrupted` event.
     pub(crate) interrupt_pending: Arc<AtomicBool>,
 }
+
+// Debuggee contains a Box<dyn OpaqueDebugger> whose inner heap is opaque;
+// we report only the inline struct size, which is fixed regardless of mutation.
+impl FixedHostHeapUsage for Debuggee {}
 
 impl Debuggee {
     /// Finish execution of the debuggee before returning.
@@ -125,6 +129,10 @@ enum EventFutureState {
     },
 }
 
+// EventFuture contains a Pin<Box<dyn Future>> whose inner heap is opaque;
+// we report only the inline struct size.
+impl FixedHostHeapUsage for EventFuture {}
+
 impl EventFuture {
     fn new_single_step(
         mut inner: Box<dyn OpaqueDebugger + Send + 'static>,
@@ -174,17 +182,23 @@ impl wasmtime_wasi_io::poll::Pollable for EventFuture {
 }
 
 /// Representation of a frame within a debuggee.
-#[derive(Clone)]
+#[derive(Clone, FixedHostHeapUsage)]
 pub struct Frame(FrameHandle);
 
 /// Representation of a Wasm exception object.
+///
+/// Note: GC-managed objects are metered and collected by Wasmtime's Wasm GC
+/// runtime and `StoreLimits`, rather than the host `ResourceTable`.
 #[derive(Clone)]
 pub struct WasmException(OwnedRooted<ExnRef>);
+
+impl FixedHostHeapUsage for WasmException {}
 
 /// Representation of a Wasm value.
 ///
 /// This is distinct from `wasmtime::Val` because we need the Owned
-/// variants of GC references here.
+/// variants of GC references here. GC-managed objects are governed by
+/// Wasm GC heap limits rather than the host `ResourceTable`.
 #[derive(Clone)]
 pub enum WasmValue {
     /// A primitive (non-GC) value.
@@ -195,6 +209,8 @@ pub enum WasmValue {
     Func(Option<Func>),
     // TODO: GC structs and arrays.
 }
+
+impl FixedHostHeapUsage for WasmValue {}
 
 /// Get the `OpaqueDebugger` or raise an error.
 fn debugger<'a>(

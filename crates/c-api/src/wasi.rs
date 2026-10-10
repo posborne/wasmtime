@@ -10,6 +10,7 @@ use std::slice;
 use std::task::{Context, Poll};
 use tokio::io::{self, AsyncWrite};
 use wasmtime::Result;
+use wasmtime::component::HostHeapUsage;
 use wasmtime_wasi::WasiCtxBuilder;
 use wasmtime_wasi::p1::WasiP1Ctx;
 use wasmtime_wasi_io::streams::StreamError;
@@ -200,6 +201,14 @@ impl CustomOutputStream {
                 callback,
             }),
         }
+    }
+}
+
+// Foreign C data is opaque and unmetered by the host table; C embedders
+// should provide their own mechanisms for metering foreign memory usage.
+impl HostHeapUsage for CustomOutputStream {
+    fn heap_size_of_children(&self) -> usize {
+        0
     }
 }
 

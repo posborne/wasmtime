@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use std::task::{Poll, ready};
 use wasmtime::Result;
+use wasmtime::component::FixedHostHeapUsage;
 use wasmtime_wasi_io::streams::StreamResult;
 
 /// A TCP socket + associated p2 bookkeeping.
@@ -318,3 +319,9 @@ impl Pollable for TcpWriter {
         poll_fn(|cx| self.0.lock().unwrap().poll_ready(cx).map(|_| ())).await;
     }
 }
+// Network sockets and streams transfer I/O directly between guest memory
+// and OS kernel socket buffers (SO_RCVBUF/SO_SNDBUF) without maintaining
+// an unbounded host-side queue.
+impl FixedHostHeapUsage for TcpSocket {}
+impl FixedHostHeapUsage for TcpReader {}
+impl FixedHostHeapUsage for TcpWriter {}

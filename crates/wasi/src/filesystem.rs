@@ -7,7 +7,7 @@ use std::marker;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tracing::debug;
-use wasmtime::component::{HasData, Resource, ResourceTable};
+use wasmtime::component::{FixedHostHeapUsage, HasData, Resource, ResourceTable};
 use wasmtime::error::Context as _;
 
 #[cfg(unix)]
@@ -1315,3 +1315,8 @@ pub trait WasiFilesystemNamedView: Send + 'static {
     /// abstraction and just helps the host allocate and manage state.
     fn filesystem(&mut self, id: NamedId) -> WasiFilesystemCtxView<'_>;
 }
+
+// File and Dir both wrap Arc<cap_std::fs::File/Dir>, which are OS
+// file descriptor handles. The Arc itself is pointer-sized; the
+// underlying OS resource lives in kernel space and is not tracked here.
+impl FixedHostHeapUsage for Descriptor {}

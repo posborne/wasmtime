@@ -1,3 +1,4 @@
+use crate::component::FixedHostHeapUsage;
 use crate::component::concurrent::table::{TableDebug, TableId};
 use crate::component::concurrent::{ConcurrentState, CurrentThread};
 use crate::error::Result;
@@ -9,6 +10,8 @@ use alloc::vec::Vec;
 struct TaskGroup {
     ref_count: usize,
 }
+
+impl FixedHostHeapUsage for TaskGroup {}
 
 impl TableDebug for TaskGroup {
     fn type_name() -> &'static str {

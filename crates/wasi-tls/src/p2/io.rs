@@ -9,6 +9,7 @@ use std::{future::Future, mem, pin::Pin};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::Mutex;
 use wasmtime::Result;
+use wasmtime::component::HostHeapUsage;
 use wasmtime_wasi::async_trait;
 use wasmtime_wasi::p2::{
     DynInputStream, DynOutputStream, OutputStream, Pollable, StreamError, StreamResult,
@@ -407,5 +408,13 @@ where
             }
             _ => {}
         }
+    }
+}
+
+impl<IO: Send + 'static> HostHeapUsage for AsyncWriteStream<IO> {
+    fn heap_size_of_children(&self) -> usize {
+        // Background write tasks and OS socket buffers are managed by the runtime
+        // and kernel, and are out of scope for host heap tracking.
+        0
     }
 }

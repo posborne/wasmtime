@@ -2195,3 +2195,39 @@ mod multiple_host_borrows {
         Ok(())
     }
 }
+
+#[test]
+fn component_resource_table_host_heap_limit() -> Result<()> {
+    use wasmtime::component::{HostHeapUsage, ResourceTable, ResourceTableError};
+
+    #[derive(HostHeapUsage)]
+    struct DynamicBuffer {
+        data: Vec<u8>,
+    }
+
+    let mut table = ResourceTable::new();
+    table.set_max_host_heap_usage(Some(256));
+
+    let r = table.push(DynamicBuffer { data: vec![0; 64] })?;
+    assert!(table.current_host_heap_usage() >= 64);
+
+    // Growing within limit succeeds
+    table.update_resource(&r, |buf| {
+        buf.data.resize(128, 0);
+    })?;
+    assert!(table.current_host_heap_usage() >= 128);
+
+    // Growing past limit fails with HostMemoryLimitExceeded
+    let err = table
+        .update_resource(&r, |buf| {
+            buf.data.resize(1024, 0);
+        })
+        .unwrap_err();
+    assert!(matches!(err, ResourceTableError::HostMemoryLimitExceeded));
+
+    // Deleting frees the tracked memory
+    table.delete(r)?;
+    assert_eq!(table.current_host_heap_usage(), 0);
+
+    Ok(())
+}

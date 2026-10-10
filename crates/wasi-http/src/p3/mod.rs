@@ -301,3 +301,8 @@ impl<T> MaybeMutable<T> {
         }
     }
 }
+
+impl<T: wasmtime::component::FixedHostHeapUsage> wasmtime::component::FixedHostHeapUsage
+    for MaybeMutable<T>
+{
+}

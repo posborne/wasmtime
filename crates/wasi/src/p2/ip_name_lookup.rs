@@ -7,7 +7,7 @@ use crate::sockets::{MaybeSpawned, WasiSocketsCtxView};
 use std::net::IpAddr;
 use std::vec;
 use wasmtime::Result;
-use wasmtime::component::Resource;
+use wasmtime::component::{HostHeapUsage, Resource};
 use wasmtime_wasi_io::poll::{DynPollable, Pollable, subscribe};
 
 pub struct ResolveAddressStream(MaybeSpawned<Result<vec::IntoIter<IpAddr>, ErrorCode>>);
@@ -41,15 +41,16 @@ impl HostResolveAddressStream for WasiSocketsCtxView<'_> {
         &mut self,
         resource: Resource<ResolveAddressStream>,
     ) -> Result<Option<IpAddress>, SocketError> {
-        let stream: &mut ResolveAddressStream = self.table.get_mut(&resource)?;
-        let Some(result) = poll_now(|cx| stream.0.poll_ready(cx)) else {
-            return Err(ErrorCode::WouldBlock.into());
-        };
+        self.table.update_resource(&resource, |stream| {
+            let Some(result) = poll_now(|cx| stream.0.poll_ready(cx)) else {
+                return Err(ErrorCode::WouldBlock.into());
+            };
 
-        match result {
-            Ok(iter) => Ok(iter.next().map(|addr| addr.into())),
-            Err(err) => Err((*err).into()),
-        }
+            match result {
+                Ok(iter) => Ok(iter.next().map(|addr| addr.into())),
+                Err(err) => Err((*err).into()),
+            }
+        })?
     }
 
     fn subscribe(
@@ -175,6 +176,17 @@ mod named {
             resource: Resource<ResolveAddressStream>,
         ) -> Result<()> {
             super::HostResolveAddressStream::drop(&mut self.0.sockets(id), resource).await
+        }
+    }
+}
+
+impl HostHeapUsage for ResolveAddressStream {
+    fn heap_size_of_children(&self) -> usize {
+        match &self.0 {
+            crate::sockets::MaybeSpawned::Ready(Ok(iter)) => {
+                iter.as_slice().len() * core::mem::size_of::<IpAddr>()
+            }
+            _ => 0,
         }
     }
 }

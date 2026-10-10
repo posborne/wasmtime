@@ -81,7 +81,9 @@ mod generated {
 use self::generated::wasi::keyvalue;
 use std::collections::HashMap;
 use wasmtime::Result;
-use wasmtime::component::{HasData, Resource, ResourceTable, ResourceTableError};
+use wasmtime::component::{
+    HasData, HostHeapUsage, Resource, ResourceTable, ResourceTableError, TrackedHashMap,
+};
 
 #[doc(hidden)]
 pub enum Error {
@@ -97,8 +99,9 @@ impl From<ResourceTableError> for Error {
 }
 
 #[doc(hidden)]
+#[derive(HostHeapUsage)]
 pub struct Bucket {
-    in_memory_data: HashMap<String, Vec<u8>>,
+    in_memory_data: TrackedHashMap<String, Vec<u8>>,
 }
 
 /// Builder-style structure used to create a [`WasiKeyValueCtx`].
@@ -164,7 +167,7 @@ impl keyvalue::store::Host for WasiKeyValue<'_> {
     fn open(&mut self, identifier: String) -> Result<Resource<Bucket>, Error> {
         match identifier.as_str() {
             "" => Ok(self.table.push(Bucket {
-                in_memory_data: self.ctx.in_memory_data.clone(),
+                in_memory_data: self.ctx.in_memory_data.clone().into_iter().collect(),
             })?),
             _ => Err(Error::NoSuchStore),
         }
@@ -181,24 +184,26 @@ impl keyvalue::store::Host for WasiKeyValue<'_> {
 
 impl keyvalue::store::HostBucket for WasiKeyValue<'_> {
     fn get(&mut self, bucket: Resource<Bucket>, key: String) -> Result<Option<Vec<u8>>, Error> {
-        let bucket = self.table.get_mut(&bucket)?;
+        let bucket = self.table.get(&bucket)?;
         Ok(bucket.in_memory_data.get(&key).cloned())
     }
 
     fn set(&mut self, bucket: Resource<Bucket>, key: String, value: Vec<u8>) -> Result<(), Error> {
-        let bucket = self.table.get_mut(&bucket)?;
-        bucket.in_memory_data.insert(key, value);
+        self.table.update_resource(&bucket, |b| {
+            b.in_memory_data.insert(key, value);
+        })?;
         Ok(())
     }
 
     fn delete(&mut self, bucket: Resource<Bucket>, key: String) -> Result<(), Error> {
-        let bucket = self.table.get_mut(&bucket)?;
-        bucket.in_memory_data.remove(&key);
+        self.table.update_resource(&bucket, |b| {
+            b.in_memory_data.remove(&key);
+        })?;
         Ok(())
     }
 
     fn exists(&mut self, bucket: Resource<Bucket>, key: String) -> Result<bool, Error> {
-        let bucket = self.table.get_mut(&bucket)?;
+        let bucket = self.table.get(&bucket)?;
         Ok(bucket.in_memory_data.contains_key(&key))
     }
 
@@ -207,7 +212,7 @@ impl keyvalue::store::HostBucket for WasiKeyValue<'_> {
         bucket: Resource<Bucket>,
         cursor: Option<u64>,
     ) -> Result<keyvalue::store::KeyResponse, Error> {
-        let bucket = self.table.get_mut(&bucket)?;
+        let bucket = self.table.get(&bucket)?;
         let keys: Vec<String> = bucket.in_memory_data.keys().cloned().collect();
         // `cursor` is guest-controlled, so clamp it to the number of keys before
         // slicing. `try_from` also guards against a `u64` that does not fit in a
@@ -235,20 +240,24 @@ impl keyvalue::atomics::Host for WasiKeyValue<'_> {
         key: String,
         delta: u64,
     ) -> Result<u64, Error> {
-        let bucket = self.table.get_mut(&bucket)?;
-        let value = bucket
-            .in_memory_data
-            .entry(key.clone())
-            .or_insert("0".to_string().into_bytes());
-        let current_value = String::from_utf8(value.clone())
-            .map_err(|e| Error::Other(e.to_string()))?
-            .parse::<u64>()
-            .map_err(|e| Error::Other(e.to_string()))?;
-        let new_value = current_value
-            .checked_add(delta)
-            .ok_or_else(|| Error::Other("overflow incrementing value".to_string()))?;
-        *value = new_value.to_string().into_bytes();
-        Ok(new_value)
+        self.table.update_resource(&bucket, |bucket| {
+            let current_bytes = bucket
+                .in_memory_data
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| "0".to_string().into_bytes());
+            let current_value = String::from_utf8(current_bytes)
+                .map_err(|e| Error::Other(e.to_string()))?
+                .parse::<u64>()
+                .map_err(|e| Error::Other(e.to_string()))?;
+            let new_value = current_value
+                .checked_add(delta)
+                .ok_or_else(|| Error::Other("overflow incrementing value".to_string()))?;
+            bucket
+                .in_memory_data
+                .insert(key, new_value.to_string().into_bytes());
+            Ok(new_value)
+        })?
     }
 }
 
@@ -258,7 +267,7 @@ impl keyvalue::batch::Host for WasiKeyValue<'_> {
         bucket: Resource<Bucket>,
         keys: Vec<String>,
     ) -> Result<Vec<Option<(String, Vec<u8>)>>, Error> {
-        let bucket = self.table.get_mut(&bucket)?;
+        let bucket = self.table.get(&bucket)?;
         Ok(keys
             .into_iter()
             .map(|key| {
@@ -275,18 +284,20 @@ impl keyvalue::batch::Host for WasiKeyValue<'_> {
         bucket: Resource<Bucket>,
         key_values: Vec<(String, Vec<u8>)>,
     ) -> Result<(), Error> {
-        let bucket = self.table.get_mut(&bucket)?;
-        for (key, value) in key_values {
-            bucket.in_memory_data.insert(key, value);
-        }
+        self.table.update_resource(&bucket, |b| {
+            for (key, value) in key_values {
+                b.in_memory_data.insert(key, value);
+            }
+        })?;
         Ok(())
     }
 
     fn delete_many(&mut self, bucket: Resource<Bucket>, keys: Vec<String>) -> Result<(), Error> {
-        let bucket = self.table.get_mut(&bucket)?;
-        for key in keys {
-            bucket.in_memory_data.remove(&key);
-        }
+        self.table.update_resource(&bucket, |b| {
+            for key in keys {
+                b.in_memory_data.remove(&key);
+            }
+        })?;
         Ok(())
     }
 }

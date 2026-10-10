@@ -362,6 +362,7 @@ mod tests {
     use super::{FieldMap, FieldMapError, parse_header_value};
     use crate::default_hooks;
     use http::header::{CONTENT_LENGTH, CONTENT_TYPE};
+    use wasmtime::component::ResourceTable;
 
     #[test]
     fn test_immutable() {
@@ -460,5 +461,50 @@ mod tests {
 
         // other header names are unaffected
         assert!(parse_header_value(&CONTENT_TYPE, b"text/plain".to_vec()).is_ok());
+    }
+
+    #[test]
+    fn test_field_map_resource_table_limit() -> Result<(), FieldMapError> {
+        let mut table = ResourceTable::new();
+        let map = FieldMap::new_mutable(1000);
+        let r = table.push(map).unwrap();
+
+        // Set a limit relative to the initial table usage to ensure robustness
+        // across targets with different pointer widths and struct padding.
+        let baseline = table.current_host_heap_usage();
+        table.set_max_host_heap_usage(Some(baseline + 100));
+
+        let hooks = default_hooks();
+        let name = "custom-header".to_string();
+
+        // Mutating within table limit succeeds
+        table
+            .update_resource(&r, |map| map.append(hooks, name.clone(), b"small".to_vec()))
+            .unwrap()
+            .unwrap();
+
+        // Mutating beyond table limit returns HostMemoryLimitExceeded
+        let err = table
+            .update_resource(&r, |map| map.append(hooks, name.clone(), vec![b'a'; 500]))
+            .unwrap_err();
+
+        assert!(matches!(
+            err,
+            wasmtime::component::ResourceTableError::HostMemoryLimitExceeded
+        ));
+
+        Ok(())
+    }
+}
+
+use wasmtime::component::HostHeapUsage;
+
+impl HostHeapUsage for FieldMap {
+    fn heap_size_of_children(&self) -> usize {
+        // FieldMap references an Arc<HeaderMap> so counting size for each
+        // instance is not accurate but is the preferred implementation to
+        // ensure that we do track header mutations that could cause
+        // excess host heap usage.
+        self.size
     }
 }

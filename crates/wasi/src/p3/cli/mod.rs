@@ -235,5 +235,7 @@ where
     Ok(())
 }
 
+#[derive(wasmtime::component::FixedHostHeapUsage)]
 pub struct TerminalInput;
+#[derive(wasmtime::component::FixedHostHeapUsage)]
 pub struct TerminalOutput;

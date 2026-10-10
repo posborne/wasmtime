@@ -64,3 +64,26 @@ async fn keyvalue_main() -> Result<()> {
     )
     .await
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn keyvalue_host_heap_limit() -> Result<()> {
+    let mut table = ResourceTable::new();
+    // Set a very tight heap limit that cannot accommodate all insertions from the test program
+    table.set_max_host_heap_usage(Some(64));
+
+    let res = run_wasi(
+        KEYVALUE_MAIN_COMPONENT,
+        Ctx {
+            table,
+            wasi_ctx: WasiCtx::builder().inherit_stderr().build(),
+            wasi_keyvalue_ctx: WasiKeyValueCtxBuilder::new()
+                .in_memory_data([("atomics_key", "5")])
+                .build(),
+        },
+    )
+    .await;
+
+    // The guest program fails when the host rejects writes beyond the limit
+    assert!(res.is_err());
+    Ok(())
+}

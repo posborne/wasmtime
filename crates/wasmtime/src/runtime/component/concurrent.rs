@@ -53,7 +53,8 @@
 use self::error_contexts::GlobalErrorContextRefCount;
 use crate::component::func::{Func, call_post_return};
 use crate::component::{
-    HasData, HasSelf, Instance, Resource, ResourceTable, ResourceTableError, RuntimeInstance,
+    FixedHostHeapUsage, HasData, HasSelf, HostHeapUsage, Instance, Resource, ResourceTable,
+    ResourceTableError, RuntimeInstance,
 };
 use crate::fiber::{self, StoreFiber, StoreFiberYield};
 use crate::hash_set::HashSet;
@@ -868,6 +869,10 @@ impl fmt::Debug for WorkItem {
         }
     }
 }
+
+// WorkItem variants contain opaque futures, closures, or fibers;
+// report inline size only.
+impl FixedHostHeapUsage for WorkItem {}
 
 /// Whether a suspension intrinsic was cancelled or completed
 #[derive(Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
@@ -2531,10 +2536,17 @@ impl StoreOpaque {
         let state = self.concurrent_state_mut()?;
         state.delete(guest_thread.thread)?;
         state.delete(sync_call_set)?;
-        let task = state.get_mut(guest_thread.task)?;
-        task.threads.remove(&guest_thread.thread);
+        let threads_empty =
+            state
+                .table
+                .get_mut()
+                .update_resource(&Resource::from(guest_thread.task), |task| {
+                    task.threads.remove(&guest_thread.thread);
+                    task.threads.is_empty()
+                })?;
 
-        if task.threads.is_empty() && !task.returned_or_cancelled() {
+        let task = state.get_mut(guest_thread.task)?;
+        if threads_empty && !task.returned_or_cancelled() {
             bail!(Trap::NoAsyncResult);
         }
         let ready_to_delete = task.ready_to_delete();
@@ -4167,7 +4179,12 @@ impl Instance {
 
         let new_thread = GuestThread::new_explicit(state, parent_task, start_func)?;
         let thread_id = state.push(new_thread)?;
-        state.get_mut(parent_task)?.threads.insert(thread_id);
+        state
+            .table
+            .get_mut()
+            .update_resource(&Resource::from(parent_task), |task| {
+                task.threads.insert(thread_id);
+            })?;
 
         log::trace!("new thread with id {thread_id:?} created");
 
@@ -5194,6 +5211,8 @@ impl TableDebug for HostTask {
     }
 }
 
+impl FixedHostHeapUsage for HostTask {}
+
 type CallbackFn = Box<dyn Fn(&mut dyn VMStore, Event, u32) -> Result<u32> + Send + Sync + 'static>;
 
 /// Represents the caller of a given guest task.
@@ -5386,6 +5405,8 @@ impl TableDebug for GuestThread {
     }
 }
 
+impl FixedHostHeapUsage for GuestThread {}
+
 enum SyncResult {
     NotProduced,
     Produced(Option<ValRaw>),
@@ -5560,7 +5581,12 @@ impl GuestTask {
         })?;
         let new_thread = GuestThread::new_implicit(state, task)?;
         let thread = state.push(new_thread)?;
-        state.get_mut(task)?.threads.insert(thread);
+        state
+            .table
+            .get_mut()
+            .update_resource(&Resource::from(task), |t| {
+                t.threads.insert(thread);
+            })?;
         state.interesting_tasks += 1;
         let thread = QualifiedThreadId { task, thread };
         log::trace!("new implicit thread {thread:?} for instance {instance:?}");
@@ -5571,6 +5597,14 @@ impl GuestTask {
 impl TableDebug for GuestTask {
     fn type_name() -> &'static str {
         "GuestTask"
+    }
+}
+
+impl HostHeapUsage for GuestTask {
+    fn heap_size_of_children(&self) -> usize {
+        // Account for the heap from the threads HashSet.
+        // The HashSet's per-entry overhead is approximated by entry count * entry size.
+        self.threads.len() * core::mem::size_of::<TableId<GuestThread>>()
     }
 }
 
@@ -5784,6 +5818,17 @@ impl WaitableSet {
 impl TableDebug for WaitableSet {
     fn type_name() -> &'static str {
         "WaitableSet"
+    }
+}
+
+impl HostHeapUsage for WaitableSet {
+    fn heap_size_of_children(&self) -> usize {
+        // Account for the BTreeSet/BTreeMap node allocations.
+        // BTree node counts are not directly queryable, so we estimate based
+        // on the number of entries and the size of each key/value pair.
+        self.ready.len() * core::mem::size_of::<Waitable>()
+            + self.waiting.len()
+                * (core::mem::size_of::<TableId<GuestTask>>() + core::mem::size_of::<WaitMode>())
     }
 }
 
@@ -6197,15 +6242,26 @@ impl ConcurrentState {
         }
     }
 
-    fn push<V: Send + Sync + 'static>(
+    fn push<V: Send + Sync + 'static + HostHeapUsage>(
         &mut self,
         value: V,
     ) -> Result<TableId<V>, ResourceTableError> {
         self.table.get_mut().push(value).map(TableId::from)
     }
 
+    /// Get a mutable reference to a table entry by id.
+    ///
+    /// **Note:** This bypasses heap-usage tracking. Callers must not use the
+    /// returned reference to mutate fields that change the value's heap
+    /// footprint (e.g. inserting into or removing from a `HashSet` field).
+    /// For mutations that do change heap footprint, use
+    /// [`ResourceTable::update_resource`] directly on `self.table`.
     fn get_mut<V: 'static>(&mut self, id: TableId<V>) -> Result<&mut V, ResourceTableError> {
-        self.table.get_mut().get_mut(&Resource::from(id))
+        self.table
+            .get_mut()
+            .get_any_mut(Resource::<V>::from(id).rep())?
+            .downcast_mut()
+            .ok_or(ResourceTableError::WrongType)
     }
 
     pub fn add_child<T: 'static, U: 'static>(
@@ -6228,7 +6284,10 @@ impl ConcurrentState {
             .remove_child(Resource::from(child), Resource::from(parent))
     }
 
-    fn delete<V: 'static>(&mut self, id: TableId<V>) -> Result<V, ResourceTableError> {
+    fn delete<V: 'static + HostHeapUsage>(
+        &mut self,
+        id: TableId<V>,
+    ) -> Result<V, ResourceTableError> {
         self.table.get_mut().delete(Resource::from(id))
     }
 

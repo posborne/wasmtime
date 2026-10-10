@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll, ready};
 use tokio::io::{self, AsyncRead, AsyncWrite};
 use tokio::sync::{Mutex, OwnedMutexGuard};
+use wasmtime::component::HostHeapUsage;
 use wasmtime_wasi_io::streams::{InputStream, OutputStream};
 
 /// An impl of [`StdinStream`] built on top of [`AsyncRead`].
@@ -375,5 +376,17 @@ where
                 _ => unreachable!(),
             }
         }
+    }
+}
+
+impl HostHeapUsage for AsyncStdinStream {
+    fn heap_size_of_children(&self) -> usize {
+        self.0.try_lock().map_or(0, |s| s.heap_size_of_children())
+    }
+}
+
+impl HostHeapUsage for AsyncStdoutStream {
+    fn heap_size_of_children(&self) -> usize {
+        self.0.try_lock().map_or(0, |s| s.heap_size_of_children())
     }
 }

@@ -10,7 +10,7 @@ use bytes::Bytes;
 use http_body_util::BodyExt;
 use hyper::body::Body;
 use wasmtime::Result;
-use wasmtime::component::Resource;
+use wasmtime::component::{FixedHostHeapUsage, HostHeapUsage, Resource};
 use wasmtime_wasi::p2::Pollable;
 use wasmtime_wasi::runtime::AbortOnDropJoinHandle;
 
@@ -260,5 +260,82 @@ impl Pollable for HostFutureIncomingResponse {
         if let Self::Pending(handle) = self {
             *self = Self::Ready(handle.await);
         }
+    }
+}
+
+impl HostHeapUsage for HostIncomingRequest {
+    fn heap_size_of_children(&self) -> usize {
+        let uri_approx = self.uri.scheme_str().map_or(0, str::len)
+            + self.uri.host().map_or(0, str::len)
+            + self.uri.path_and_query().map_or(0, |pq| pq.as_str().len());
+        self.authority.heap_size_of_children() + uri_approx + self.headers.heap_size_of_children()
+    }
+}
+
+impl FixedHostHeapUsage for HostResponseOutparam {}
+
+impl HostHeapUsage for HostOutgoingResponse {
+    fn heap_size_of_children(&self) -> usize {
+        self.headers.heap_size_of_children()
+    }
+}
+
+impl HostHeapUsage for HostOutgoingRequest {
+    fn heap_size_of_children(&self) -> usize {
+        self.authority.heap_size_of_children()
+            + self.path_with_query.heap_size_of_children()
+            + self.headers.heap_size_of_children()
+    }
+}
+
+impl HostHeapUsage for HostIncomingResponse {
+    fn heap_size_of_children(&self) -> usize {
+        self.headers.heap_size_of_children()
+    }
+}
+
+impl FixedHostHeapUsage for HostFutureIncomingResponse {}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::default_hooks;
+    use wasmtime::component::ResourceTable;
+
+    #[test]
+    fn test_response_headers_heap_usage() {
+        let mut table = ResourceTable::new();
+        table.set_max_host_heap_usage(Some(300));
+
+        let mut fields = FieldMap::new_mutable(1000);
+        fields
+            .append(
+                default_hooks(),
+                "content-type".to_string(),
+                b"text/plain".to_vec(),
+            )
+            .unwrap();
+        let headers_size = fields.heap_size_of_children();
+        assert!(headers_size > 0);
+
+        let resp = HostOutgoingResponse {
+            status: http::StatusCode::OK,
+            headers: fields,
+            body: None,
+        };
+
+        // Pushing within limit succeeds and accounts for headers
+        let r = table.push(resp).unwrap();
+        assert!(table.current_host_heap_usage() >= headers_size);
+
+        // Mutating status does not alter heap usage
+        table
+            .update_resource(&r, |resp| resp.status = http::StatusCode::NOT_FOUND)
+            .unwrap();
+        assert!(table.current_host_heap_usage() >= headers_size);
+
+        // Deleting releases the accounted memory
+        table.delete(r).unwrap();
+        assert_eq!(table.current_host_heap_usage(), 0);
     }
 }
